@@ -814,7 +814,7 @@ const VuePlateau = (() => {
     function figurine(cote, html, nom, vie, vieMax, classe = '') {
       return `<figure class="combattant ${cote} ${classe}">
         <div class="portrait">${html}</div>
-        <figcaption><strong>${echapperTexte(nom)}</strong><span class="vie">♥ ${vie ?? '?'}${vieMax != null ? ' / ' + vieMax : ''}</span></figcaption>
+        <figcaption>${classe.includes('attaquant') ? '<span class="role">⚔ attaque</span>' : ''}<strong>${echapperTexte(nom)}</strong><span class="vie">♥ ${vie ?? '?'}${vieMax != null ? ' / ' + vieMax : ''}</span></figcaption>
       </figure>`;
     }
 
@@ -836,8 +836,9 @@ const VuePlateau = (() => {
         const mVivant = etat.monstres.find(k => k.id === c.monstre);
         const nomM = infoMonstre(c.type).nom, court = infoMonstre(c.type).court;
         const vieM = mVivant ? mVivant.corps : c.vieMonstre ?? 0;
-        const gauche = figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, h.corps === 0 ? 'vaincu' : '');
-        const droite = figurine('droite', Portraits.monstre(c.type, court), nomM, vieM, mVivant?.corpsMax ?? c.vieMonstreMax, vieM === 0 ? 'vaincu' : '');
+        const attH = c.genre === 'heros' ? ' attaquant' : ' defenseur', attM = c.genre === 'zargon' ? ' attaquant' : ' defenseur';
+        const gauche = figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, (h.corps === 0 ? 'vaincu' : '') + attH);
+        const droite = figurine('droite', Portraits.monstre(c.type, court), nomM, vieM, mVivant?.corpsMax ?? c.vieMonstreMax, (vieM === 0 ? 'vaincu' : '') + attM);
         let texte;
         if (c.genre === 'zargon') {
           texte = c.cranes === 0
@@ -863,8 +864,8 @@ const VuePlateau = (() => {
         const h = herosActif();
         const m = etat.monstres.find(k => k.id === combat.monstre);
         const n = carac('heros', h.id, 'attaque');
-        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}<div class="centre">⚔</div>
-            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax)}</div>
+        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'defenseur')}</div>
           <p class="ambiance">${echapperTexte(combat.ambiance)}</p>
           <p class="question">${h.nom} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat. Combien de crânes ?</p>
           <div class="choix nombres">${boutonsNombre(n, 'cranes')}</div>
@@ -875,8 +876,8 @@ const VuePlateau = (() => {
         const h = etat.heros.find(k => k.id === d.heros);
         const m = etat.monstres.find(k => k.id === d.monstre);
         const n = carac('heros', h.id, 'defense');
-        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}<div class="centre">⚔</div>
-            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax)}</div>
+        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'defenseur')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'attaquant')}</div>
           <p class="legende">Attaque de ${infoMonstre(m.type).nom}</p>
           ${htmlDes(d.tirage || [], d.cle || 'ancien')}
           <div class="apres-des">

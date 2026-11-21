@@ -366,3 +366,12 @@ table.caracs.petite { margin-top: 8px; }
 .des-lances.roule .de { animation: secousse 0.18s infinite alternate; }
 @keyframes secousse { from { transform: rotate(-8deg) translateY(-2px); } to { transform: rotate(8deg) translateY(2px); } }
 .masque { visibility: hidden; }
+
+/* Attaquant mis en avant dans le duel */
+.duel { align-items: flex-end; }
+.combattant .portrait { transition: width 0.25s, height 0.25s; }
+.combattant.attaquant { width: 190px; }
+.combattant.attaquant .portrait { width: 160px; height: 160px; filter: drop-shadow(0 0 14px rgba(255, 140, 60, 0.55)); }
+.combattant.defenseur .portrait { width: 84px; height: 84px; opacity: 0.9; }
+.combattant.attaquant.vaincu .portrait, .combattant.defenseur.vaincu .portrait { filter: grayscale(1) brightness(0.5); }
+.combattant .role { color: #ffb36b; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
