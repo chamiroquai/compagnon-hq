@@ -32,6 +32,18 @@ const VuePlateau = (() => {
     const { L, H } = g;
     let etat = partie.etat;
     if (!etat.tour) etat.tour = { numero: 1, index: 0 }; // parties commencées avant la v0.5.0
+    // Quête de démonstration commencée avant la v0.13.0 : on y ajoute les pièges
+    // (la quête est copiée dans la partie au démarrage, l'ancienne copie n'en avait pas).
+    if (quete.id === QUETE_DEMO.id && !quete.pieges && QUETE_DEMO.pieges) {
+      quete.pieges = JSON.parse(JSON.stringify(QUETE_DEMO.pieges));
+      // Un piège déjà « sous » une figurine ou sur une case découverte reste caché mais n'est pas posé
+      // là où se trouve déjà un héros (pour ne pas le déclencher par surprise).
+      etat.pieges = quete.pieges
+        .filter(p => !etat.heros.some(h => h.x === p.x && h.y === p.y))
+        .map(p => ({ ...p, trouve: false, declenche: false }));
+      partie.quete = quete; partie.etat = etat; enregistrer();
+    }
+    if (!etat.pieges) etat.pieges = [];
     const caracs = options.caracs || Regles.caracsVides();
     const carac = (famille, type, champ) => Regles.valeur(caracs, famille, type, champ);
     // Caractéristique d'un héros : celle de son personnage (registre), sinon celle des Réglages.
