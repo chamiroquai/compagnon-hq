@@ -154,6 +154,13 @@ const Plateau = (() => {
 
     etat.revele = [...vu].sort((a, b) => a - b);
     etat.penombre = penombre;
+
+    // Monstres vus (décision du 21/11/2026) : un monstre n'existe pour Zargon qu'une fois
+    // aperçu par les héros (case dévoilée, pénombre comprise). Il reste ensuite actif,
+    // même s'il repart dans le brouillard. Un monstre jamais vu ne bouge pas.
+    for (const m of etat.monstres) {
+      if (!m.vu && vu.has(idx(g.L, m.x, m.y))) m.vu = true;
+    }
     return vu.size - avant;
   }
 
