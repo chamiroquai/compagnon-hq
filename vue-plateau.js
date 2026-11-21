@@ -23,6 +23,9 @@ const VuePlateau = (() => {
   };
   const infoMonstre = type => MONSTRES[type] || { nom: type, court: String(type).slice(0, 2) };
 
+  // Protège un texte avant de l'insérer dans la page.
+  const echapperTexte = t => String(t ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
   // Crée un élément SVG avec ses attributs.
   function el(nom, attrs = {}, parent) {
     const e = document.createElementNS(NS, nom);
@@ -33,7 +36,8 @@ const VuePlateau = (() => {
 
   /* Monte le plateau dans « conteneur ».
      partie : la partie (avec .quete et .etat) ; enregistrer() : sauvegarde la partie. */
-  function monter(conteneur, partie, enregistrer) {
+  /* options : { quitter() — retour à la liste des parties ; abandonner() — abandon de la quête } */
+  function monter(conteneur, partie, enregistrer, options = {}) {
     const quete = partie.quete;
     const g = Plateau.geometrie(quete);
     const { L, H } = g;
@@ -41,54 +45,92 @@ const VuePlateau = (() => {
     if (!etat.tour) etat.tour = { numero: 1, index: 0 }; // parties commencées avant la v0.5.0
     let selection = null;        // id du héros sélectionné
     let vueMJ = false;
-    let zoom = Number(localStorage.getItem('zoomPlateau')) || 1;
+    let zoom = Number(localStorage.getItem('zoomJeu')) || 1; // 1 = plateau ajusté à l'écran
     const historique = [];       // états précédents, pour « Annuler » (60 au plus)
 
     const nomHeros = hid => etat.heros.find(h => h.id === hid)?.nom ?? hid;
+    // Écran de jeu : barre du haut (retour, ordre, tour), plateau ajusté à la place
+    // restante, colonne d'outils à droite, messages par-dessus le plateau, menu en volet.
     conteneur.innerHTML = `
-      <ol id="pl-ordre" class="ordre-jeu" aria-label="Ordre de jeu"></ol>
-      <div class="barre-plateau">
-        <button id="pl-annuler" disabled>↶ Annuler</button>
-        <button id="pl-mj" aria-pressed="false">Vue MJ</button>
-        <button id="pl-vision" aria-expanded="false">Vision</button>
-        <span class="espace"></span>
-        <button id="pl-moins" aria-label="Dézoomer">−</button>
-        <button id="pl-plus" aria-label="Zoomer">+</button>
-      </div>
-      <div id="pl-tour" class="panneau-tour"></div>
-      <div id="pl-reglages" class="reglages-vision" hidden>
-        <label for="pl-portee">Portée de vue dans les couloirs</label>
-        <select id="pl-portee">
-          <option value="illimitee">Illimitée (règle officielle)</option>
-          ${[4, 5, 6, 7, 8, 10, 12].map(n => `<option value="${n}">${n} cases</option>`).join('')}
-        </select>
-        <p class="discret petit">Règle maison : au-delà, le couloir reste dans le noir ; la dernière case vue
-          s’estompe en fondu. Les pièces sont toujours vues en entier. Réduire la portée ne recache pas
-          ce qui a déjà été vu.</p>
-      </div>
-      <p id="pl-message" class="message-plateau"></p>
-      <div class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
-      <details class="aide">
-        <summary>Comment ça marche</summary>
-        <ul class="puces petit">
-          <li>Le héros dont c’est le tour est entouré d’or. « Se déplacer » : lancez vos 2 dés rouges, touchez le total,
-              puis touchez les cases une par une (les cases possibles sont marquées).</li>
-          <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
-          <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
-          <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
-          <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
-              dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
-        </ul>
-      </details>`;
+      <div class="jeu">
+        <header id="pl-haut" class="jeu-haut">
+          <button id="pl-quitter" class="icone" aria-label="Retour aux parties">‹</button>
+          <ol id="pl-ordre" class="ordre-jeu" aria-label="Ordre de jeu"></ol>
+          <div id="pl-tour" class="panneau-tour"></div>
+        </header>
+        <div class="jeu-plateau">
+          <div id="pl-cadre" class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
+          <p id="pl-message" class="message-plateau" hidden></p>
+        </div>
+        <nav class="jeu-outils" aria-label="Outils">
+          <button id="pl-annuler" class="icone" aria-label="Annuler" disabled>↶</button>
+          <button id="pl-mj" class="icone" aria-pressed="false" aria-label="Vue MJ">MJ</button>
+          <button id="pl-plus" class="icone" aria-label="Zoomer">+</button>
+          <button id="pl-moins" class="icone" aria-label="Dézoomer">−</button>
+          <button id="pl-ajuster" class="icone petit-texte" aria-label="Ajuster le plateau à l’écran">⤢</button>
+          <span class="espace"></span>
+          <button id="pl-menu" class="icone" aria-label="Menu">☰</button>
+        </nav>
+        <div id="pl-feuille" class="feuille" hidden>
+          <div class="feuille-entete">
+            <h2>${echapperTexte(quete.titre)}</h2>
+            <button id="pl-fermer" class="icone" aria-label="Fermer le menu">✕</button>
+          </div>
+          <section>
+            <h3>Vision</h3>
+            <label for="pl-portee">Portée de vue dans les couloirs</label>
+            <select id="pl-portee">
+              <option value="illimitee">Illimitée (règle officielle)</option>
+              ${[4, 5, 6, 7, 8, 10, 12].map(n => `<option value="${n}">${n} cases</option>`).join('')}
+            </select>
+            <p class="discret petit">Règle maison : au-delà, le couloir reste dans le noir ; la dernière case vue
+              s’estompe en fondu. Les pièces sont toujours vues en entier. Réduire la portée ne recache pas
+              ce qui a déjà été vu.</p>
+          </section>
+          <section>
+            <h3>Notes de partie</h3>
+            <textarea id="pl-notes" rows="6" placeholder="Notes libres : or, objets, quêtes terminées…"></textarea>
+            <p id="pl-etat-notes" class="discret petit">Enregistrement automatique.</p>
+          </section>
+          <section>
+            <h3>Comment ça marche</h3>
+            <ul class="puces petit">
+              <li>Le héros dont c’est le tour porte un anneau blanc. « Se déplacer » : lancez vos 2 dés rouges, touchez le total,
+                  puis touchez les cases une par une (les cases possibles sont encadrées).</li>
+              <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
+              <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
+              <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
+              <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran.</li>
+              <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
+                  dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
+              <li>Touchez un message pour le faire disparaître.</li>
+            </ul>
+          </section>
+          <section class="ligne">
+            <button id="pl-quitter2">Retour aux parties</button>
+            <button id="pl-abandon" class="danger">Abandonner la quête</button>
+          </section>
+        </div>
+      </div>`;
 
     const svg = conteneur.querySelector('#pl-svg');
-    const msg = texte => { conteneur.querySelector('#pl-message').textContent = texte || ''; };
+    const cadre = conteneur.querySelector('#pl-cadre');
+    const bulle = conteneur.querySelector('#pl-message');
+    // Message affiché par-dessus le plateau ; un toucher le fait disparaître.
+    const msg = texte => { bulle.textContent = texte || ''; bulle.hidden = !texte; };
+    bulle.addEventListener('click', () => msg(''));
 
+    // Taille du plateau : au zoom 1, les cases sont aussi grandes que possible
+    // pour que tout le plateau tienne dans la place disponible.
     function appliquerZoom() {
-      // 32 px par case au zoom 1 : le plateau tient sur la largeur d'un iPad à l'horizontale.
-      svg.setAttribute('width', Math.round(L * 32 * zoom));
-      svg.setAttribute('height', Math.round(H * 32 * zoom));
+      const r = cadre.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const caseAjustee = Math.max(10, Math.min(r.width / L, r.height / H));
+      svg.setAttribute('width', Math.floor(L * caseAjustee * zoom));
+      svg.setAttribute('height', Math.floor(H * caseAjustee * zoom));
     }
+    if ('ResizeObserver' in window) new ResizeObserver(appliquerZoom).observe(cadre);
+    else window.addEventListener('resize', appliquerZoom);
 
     /* ---------- Modifier l'état ---------- */
 
@@ -319,26 +361,27 @@ const VuePlateau = (() => {
         + `<li class="zargon ${t.index >= ordre.length ? 'en-cours' : ''}">Zargon</li>`;
 
       const p = conteneur.querySelector('#pl-tour');
+      conteneur.querySelector('#pl-haut').classList.toggle('saisie', saisieDes && !vueMJ);
       if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
-      let html = `<span class="titre-tour">Tour ${t.numero} · `;
+      let html = `<span class="titre-tour">T${t.numero} · `;
       if (!actif) {
         html += `<strong>Zargon</strong></span>
-          <span class="discret petit">Les monstres agiront ici à l’étape 5.</span>
+          <span class="discret petit">(monstres : étape 5)</span>
           <button id="tr-fin-zargon" class="principal">Fin du tour de Zargon</button>`;
       } else if (saisieDes) {
         html += `<strong>${actif.nom}</strong></span>
-          <span>Total des 2 dés rouges :</span>
+          <span>Total des dés :</span>
           <div class="des">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => `<button data-total="${n}">${n}</button>`).join('')}</div>
           <button id="tr-annuler-des">Retour</button>`;
       } else if (t.deplacement) {
         html += `<strong>${actif.nom}</strong></span>
           <span class="compteur">${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''} restante${t.deplacement.restant > 1 ? 's' : ''}</span>
-          <button id="tr-fin-depl">Terminer le déplacement</button>
+          <button id="tr-fin-depl">Terminer</button>
           <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       } else {
         html += `<strong>${actif.nom}</strong></span>
           <button id="tr-depl">${t.aBouge ? 'Se déplacer encore' : 'Se déplacer'}</button>
-          <button id="tr-fin-tour" class="principal">Fin du tour de ${actif.nom}</button>`;
+          <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       }
       p.innerHTML = html;
       const sur = (sel, f) => p.querySelector(sel)?.addEventListener('click', f);
@@ -448,11 +491,27 @@ const VuePlateau = (() => {
     const choixPortee = conteneur.querySelector('#pl-portee');
     const valeurPortee = partie.reglages?.porteeCouloir ?? Plateau.PORTEE_DEFAUT;
     choixPortee.value = String(valeurPortee);
-    conteneur.querySelector('#pl-vision').addEventListener('click', e => {
-      const panneau = conteneur.querySelector('#pl-reglages');
-      panneau.hidden = !panneau.hidden;
-      e.currentTarget.setAttribute('aria-expanded', String(!panneau.hidden));
-      e.currentTarget.classList.toggle('actif', !panneau.hidden);
+    // Menu (volet) : vision, notes, aide, retour, abandon.
+    const feuille = conteneur.querySelector('#pl-feuille');
+    conteneur.querySelector('#pl-menu').addEventListener('click', () => { feuille.hidden = !feuille.hidden; });
+    conteneur.querySelector('#pl-fermer').addEventListener('click', () => { feuille.hidden = true; });
+    const quitter = () => options.quitter?.();
+    conteneur.querySelector('#pl-quitter').addEventListener('click', quitter);
+    conteneur.querySelector('#pl-quitter2').addEventListener('click', quitter);
+    conteneur.querySelector('#pl-abandon').addEventListener('click', () => options.abandonner?.());
+
+    // Notes de partie (enregistrées peu après la dernière frappe).
+    const notes = conteneur.querySelector('#pl-notes');
+    notes.value = partie.notes || '';
+    let minuterieNotes = null;
+    notes.addEventListener('input', () => {
+      conteneur.querySelector('#pl-etat-notes').textContent = 'Modification…';
+      clearTimeout(minuterieNotes);
+      minuterieNotes = setTimeout(async () => {
+        partie.notes = notes.value;
+        await enregistrer();
+        conteneur.querySelector('#pl-etat-notes').textContent = 'Enregistré sur cet iPad.';
+      }, 600);
     });
     choixPortee.addEventListener('change', () => {
       const v = choixPortee.value;
@@ -467,9 +526,10 @@ const VuePlateau = (() => {
     });
     const changerZoom = f => {
       zoom = Math.min(3, Math.max(0.6, Math.round(zoom * f * 10) / 10));
-      try { localStorage.setItem('zoomPlateau', zoom); } catch { }
+      try { localStorage.setItem('zoomJeu', zoom); } catch { }
       appliquerZoom();
     };
+    conteneur.querySelector('#pl-ajuster').addEventListener('click', () => { zoom = 1; changerZoom(1); });
     conteneur.querySelector('#pl-plus').addEventListener('click', () => changerZoom(1.25));
     conteneur.querySelector('#pl-moins').addEventListener('click', () => changerZoom(0.8));
 

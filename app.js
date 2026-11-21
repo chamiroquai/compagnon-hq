@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.5.0';
+const VERSION_APP = '0.6.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -48,6 +48,7 @@ function choisirOnglet(nom) {
 /* ---------- Vue : liste des parties ---------- */
 
 async function afficherParties() {
+  document.body.classList.remove('mode-jeu');
   partieOuverte = null;
   choisirOnglet('parties');
   $('#titre-vue').textContent = 'Parties';
@@ -99,6 +100,26 @@ async function afficherPartie(id) {
   $('#titre-vue').textContent = partie.nom;
   $('#btn-retour').hidden = false;
 
+  const enregistrerPartie = async () => {
+    partie.modifieeLe = new Date().toISOString();
+    await Stockage.enregistrerPartie(partie);
+  };
+  const abandonnerQuete = async () => {
+    if (!confirm('Abandonner la quête en cours ? Les héros, portes et cases dévoilées seront effacés (les notes restent).')) return;
+    delete partie.quete; delete partie.etat;
+    await enregistrerPartie();
+    afficherPartie(id);
+  };
+
+  // Quête en cours : écran de jeu plein écran (sans en-tête ni onglets, sans défilement).
+  if (partie.quete && partie.etat?.ordre) {
+    document.body.classList.add('mode-jeu');
+    vue.innerHTML = '<div id="zone-plateau" class="zone-jeu"></div>';
+    VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, { quitter: afficherParties, abandonner: abandonnerQuete });
+    return;
+  }
+  document.body.classList.remove('mode-jeu');
+
   vue.innerHTML = `
     <section class="carte carte-plateau">
       <h2>${partie.quete ? echapper(partie.quete.titre) : 'Plateau'}</h2>
@@ -123,12 +144,8 @@ async function afficherPartie(id) {
       </div>
     </section>`;
 
-  // Plateau : démarrer la quête de démonstration, ou afficher la quête en cours.
-  const enregistrerPartie = async () => {
-    partie.modifieeLe = new Date().toISOString();
-    await Stockage.enregistrerPartie(partie);
-  };
-  if (partie.quete && !partie.etat?.ordre) {
+  // Plateau : démarrer la quête de démonstration, ou fixer l'ordre de jeu avant le début.
+  if (partie.quete) {
     // Avant le début : fixer l'ordre de jeu des héros. La quête démarre ensuite.
     choisirOrdre($('#zone-plateau'), partie, async ordre => {
       partie.etat.ordre = ordre;
@@ -136,25 +153,13 @@ async function afficherPartie(id) {
       await enregistrerPartie();
       afficherPartie(id);
     });
-    brancherAbandon();
-  } else if (partie.quete) {
-    VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie);
-    brancherAbandon();
+    $('#btn-abandon').addEventListener('click', abandonnerQuete);
   } else {
     $('#btn-demo').addEventListener('click', async () => {
       // Copie de la quête dans la partie : la partie reste lisible même si la quête change plus tard.
       partie.quete = JSON.parse(JSON.stringify(QUETE_DEMO));
       partie.reglages = { porteeCouloir: Plateau.PORTEE_DEFAUT, ...(partie.reglages || {}) };
       partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages));
-      await enregistrerPartie();
-      afficherPartie(id);
-    });
-  }
-
-  function brancherAbandon() {
-    $('#btn-abandon').addEventListener('click', async () => {
-      if (!confirm('Abandonner la quête en cours ? Les héros, portes et cases dévoilées seront effacés (les notes restent).')) return;
-      delete partie.quete; delete partie.etat;
       await enregistrerPartie();
       afficherPartie(id);
     });
@@ -233,6 +238,7 @@ function choisirOrdre(conteneur, partie, valider) {
 /* ---------- Vue : sauvegardes ---------- */
 
 async function afficherSauvegardes() {
+  document.body.classList.remove('mode-jeu');
   partieOuverte = null;
   choisirOnglet('sauvegardes');
   $('#titre-vue').textContent = 'Sauvegardes';
@@ -329,6 +335,7 @@ $('#fichier-import').addEventListener('change', async e => {
 /* ---------- Vue : à propos ---------- */
 
 async function afficherAPropos() {
+  document.body.classList.remove('mode-jeu');
   partieOuverte = null;
   choisirOnglet('apropos');
   $('#titre-vue').textContent = 'À propos';
