@@ -76,6 +76,59 @@ const Ambiance = (() => {
       'Le cliquetis d’une arme, quelque part dans l’ombre.',
       'Une odeur de charogne flotte un instant, puis s’efface.',
     ],
+    // Un héros engage le combat
+    attaqueHeros: [
+      '{heros} serre son arme et marche sur {monstre}.',
+      '{heros} pousse un cri et se jette sur {monstre}.',
+      '{heros} fixe {monstre} droit dans les yeux. Le combat s’engage.',
+      'D’un pas décidé, {heros} engage {monstre}.',
+      '{heros} feinte à gauche… et frappe à droite !',
+      '{heros} prend une grande inspiration, puis attaque.',
+      '{monstre} montre les dents. {heros} ne recule pas.',
+      'Le métal siffle : {heros} passe à l’attaque.',
+      '{heros} cherche l’ouverture dans la garde de {monstre}.',
+      '« Pour la gloire ! » lance {heros} en chargeant {monstre}.',
+      '{heros} assure sa prise et frappe de toutes ses forces.',
+      'Un regard aux compagnons, et {heros} fond sur {monstre}.',
+    ],
+    // Un héros est blessé
+    heroBlesse: [
+      '{heros} serre les dents sous le coup.',
+      'La lame de {monstre} trouve sa cible. {heros} chancelle.',
+      '{heros} est touché, mais tient bon.',
+      'Un éclair de douleur : {heros} recule d’un pas.',
+      '{heros} essuie le sang qui coule sur son front.',
+      'Le coup de {monstre} fait plier {heros}.',
+      '{heros} grimace : la blessure est sérieuse.',
+      '{heros} vacille, puis se redresse, furieux.',
+    ],
+    // Un héros pare tout
+    heroIndemne: [
+      '{heros} pare le coup au dernier moment.',
+      'Le bouclier de {heros} résonne, mais tient bon.',
+      '{heros} esquive d’un bond. {monstre} frappe dans le vide.',
+      'Le coup de {monstre} glisse sur l’armure de {heros}.',
+      '{heros} dévie l’attaque avec aisance.',
+      '{monstre} enrage : {heros} est toujours debout, sans une égratignure.',
+      'Un réflexe salvateur : {heros} s’écarte juste à temps.',
+    ],
+    // Un monstre est blessé sans mourir
+    monstreBlesse: [
+      '{monstre} hurle de douleur, mais reste debout.',
+      'Touché ! {monstre} titube.',
+      '{monstre} recule, blessé, l’œil mauvais.',
+      'Le coup porte. {monstre} gronde de rage.',
+      '{monstre} vacille, mais refuse de tomber.',
+    ],
+    // Un monstre pare tout
+    monstreIndemne: [
+      '{monstre} pare le coup avec un ricanement.',
+      'L’arme de {heros} ricoche sur la défense de {monstre}.',
+      '{monstre} esquive d’un mouvement vif.',
+      '{heros} frappe… dans le vide.',
+      '{monstre} encaisse sans broncher.',
+      'Raté ! {monstre} semble presque amusé.',
+    ],
     // Un monstre est vaincu (en plus des messages propres à chaque type, plus bas)
     mort: [
       '{monstre} s’effondre dans un dernier râle.',

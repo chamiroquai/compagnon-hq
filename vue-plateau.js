@@ -71,6 +71,7 @@ const VuePlateau = (() => {
         <div class="jeu-plateau">
           <div id="pl-cadre" class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
           <div id="pl-invite" class="invite-porte" hidden></div>
+          <div id="pl-modale" class="modale" hidden></div>
           <p id="pl-message" class="message-plateau" hidden></p>
         </div>
         <nav class="jeu-outils" aria-label="Outils">
@@ -172,7 +173,7 @@ const VuePlateau = (() => {
       if (!historique.length) return;
       etat = JSON.parse(historique.pop());
       partie.etat = etat;
-      selection = null;
+      selection = null; combat = null; conclusion = null; ciblage = false;
       enregistrer();
       msg('Action annulée.');
       dessiner();
@@ -326,6 +327,7 @@ const VuePlateau = (() => {
 
       dessinerTour();
       dessinerInvite();
+      dessinerModale();
       conteneur.querySelector('#pl-annuler').disabled = historique.length === 0;
       const bMJ = conteneur.querySelector('#pl-mj');
       bMJ.classList.toggle('actif', vueMJ);
@@ -434,35 +436,18 @@ const VuePlateau = (() => {
 
       conteneur.querySelectorAll('[data-fiche]').forEach(b => b.addEventListener('click', () => ouvrirFiche(b.dataset.fiche)));
       const p = conteneur.querySelector('#pl-tour');
-      conteneur.querySelector('#pl-haut').classList.toggle('saisie', (saisieDes || ciblage || cible) && !vueMJ);
+      conteneur.querySelector('#pl-haut').classList.toggle('saisie', (saisieDes || ciblage) && !vueMJ);
       if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
       let html = `<span class="titre-tour">T${t.numero} · `;
       if (!actif) {
         const z = etat.zargon || {};
-        const nomM = id => { const m = etat.monstres.find(k => k.id === id); return m ? nomVisible(m) : 'Monstre'; };
-        if (z.defense) {
-          const h = etat.heros.find(k => k.id === z.defense.heros);
-          const n = carac('heros', h.id, 'defense');
-          html += `<strong>Zargon</strong> · ${nomM(z.defense.monstre)} → ${h.nom}</span>
-            <span>${h.nom} : ${n ?? '?'} dé${n > 1 ? 's' : ''} de défense — boucliers blancs ?</span>
-            <div class="des">${Array.from({ length: (n ?? 6) + 1 }, (_, k) => `<button data-blancs="${k}">${k}</button>`).join('')}</div>`;
-        } else if (z.plan) {
-          html += `<strong>Zargon</strong> · ${nomM(z.plan.monstre)} <span class="discret">(${z.n + 1}/${z.file.length})</span></span>
-            <button id="zg-valider" class="principal">Valider</button>
-            <button id="zg-passer">Passer</button>
-            <button id="zg-tout">${auto ? 'Arrêter' : 'Tout valider'}</button>`;
+        if (z.plan || z.defense || conclusion) {
+          html += `<strong>Zargon</strong> <span class="discret">· monstre ${Math.min(z.n + 1, z.file?.length || 0)} / ${z.file?.length || 0}</span></span>`;
         } else {
           html += `<strong>Zargon</strong></span>
             <span class="discret">${z.file?.length ? 'Tous les monstres ont joué.' : 'Aucun monstre actif.'}</span>
             <button id="tr-fin-zargon" class="principal">Fin du tour de Zargon</button>`;
         }
-      } else if (cible) {
-        const m = etat.monstres.find(k => k.id === cible);
-        const n = carac('heros', actif.id, 'attaque');
-        html += `<strong>${actif.nom}</strong> → ${infoMonstre(m.type).nom}</span>
-          <span>Lancez ${n ?? '?'} dé${n > 1 ? 's' : ''} : crânes obtenus ?</span>
-          <div class="des">${Array.from({ length: (n ?? 6) + 1 }, (_, k) => `<button data-cranes="${k}">${k}</button>`).join('')}</div>
-          <button id="tr-retour-attaque">Retour</button>`;
       } else if (ciblage) {
         html += `<strong>${actif.nom}</strong></span>
           <span>Touchez le monstre à attaquer.</span>
@@ -492,19 +477,14 @@ const VuePlateau = (() => {
       sur('#tr-fin-depl', terminerDeplacement);
       sur('#tr-fin-tour', finDuTour);
       sur('#tr-fin-zargon', finTourZargon);
-      sur('#zg-valider', () => { auto = false; validerMonstre(); });
-      sur('#zg-passer', () => { auto = false; passerMonstre(); });
-      sur('#zg-tout', () => { auto = !auto; if (auto) validerMonstre(); else dessiner(); });
-      p.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
       sur('#tr-attaquer', commencerAttaque);
-      sur('#tr-retour-attaque', () => { ciblage = false; cible = null; msg(''); dessiner(); });
-      p.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
+      sur('#tr-retour-attaque', () => { ciblage = false; msg(''); dessiner(); });
     }
 
     let saisieDes = false; // le panneau affiche les boutons 2 à 12
 
     function commencerDeplacement() {
-      saisieDes = true; ciblage = false; cible = null;
+      saisieDes = true; ciblage = false; combat = null; conclusion = null;
       const actif = herosActif();
       // Écart n° 1 : un seul déplacement par tour. On avertit, on ne bloque pas.
       msg(etat.tour.aBouge
@@ -550,18 +530,17 @@ const VuePlateau = (() => {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
-      saisieDes = false; ciblage = false; cible = null;
+      saisieDes = false; ciblage = false; combat = null; conclusion = null;
       modifier(e => {
         e.tour = { numero: e.tour.numero, index: e.tour.index + 1 };
         if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
       });
       const suivant = herosActif();
-      if (suivant) msg(`À ${suivant.nom} de jouer.`);
-      else msg({ ambiance: Ambiance.tirer('debutZargon') }, ambiancePlan(), 'Au tour de Zargon. ' + decrirePlan());
+      msg(suivant ? `À ${suivant.nom} de jouer.` : '');
     }
 
     function finTourZargon() {
-      auto = false;
+      conclusion = null;
       modifier(e => { e.tour = { numero: e.tour.numero + 1, index: 0 }; delete e.zargon; });
       msg(`Tour ${etat.tour.numero} : à ${herosActif()?.nom ?? '?'} de jouer.`);
     }
@@ -574,7 +553,7 @@ const VuePlateau = (() => {
 
     function porteProposee() {
       const h = herosActif();
-      if (!h || vueMJ || saisieDes || ciblage || cible) return null;
+      if (!h || vueMJ || saisieDes || ciblage || combat || conclusion) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
@@ -602,26 +581,25 @@ const VuePlateau = (() => {
 
     /* ---------- Tour de Zargon ----------
        Les monstres déjà vus jouent un par un, le plus proche des héros d'abord.
-       Pour chacun : trajet prévu affiché → Valider (ou Passer, ou correction en vue MJ)
-       → s'il touche un héros, l'application lance ses dés d'attaque ; le joueur lance
-       ses dés de défense et touche le nombre de boucliers blancs. */
-
-    let auto = false; // « Tout valider » : enchaîne les monstres, en s'arrêtant pour chaque défense
+       Pour chacun : fenêtre d'ambiance (Suivant / Passer) → déplacement animé sur
+       le plateau → s'il touche un héros : fenêtre de duel, l'application lance les
+       dés d'attaque du monstre, le joueur indique ses boucliers blancs → conclusion. */
 
     // Nom affiché : un monstre dans le brouillard reste anonyme.
-    function nomVisible(m) {
-      return etat.revele.includes(Plateau.idx(L, m.x, m.y)) ? infoMonstre(m.type).nom : 'Un monstre dans l’ombre';
+    function nomVisible(m, e = etat) {
+      return e.revele.includes(Plateau.idx(L, m.x, m.y)) ? infoMonstre(m.type).nom : 'Un monstre dans l’ombre';
     }
 
     function demarrerZargon(e) {
       const vivants = e.heros.filter(h => h.x != null && h.corps !== 0);
       const distance = m => Math.min(...vivants.map(h => Math.abs(h.x - m.x) + Math.abs(h.y - m.y)), 999);
       const file = e.monstres.filter(m => m.vu).sort((a, b) => distance(a) - distance(b)).map(m => m.id);
-      e.zargon = { file, n: 0, plan: null, defense: null };
+      e.zargon = { file, n: 0, plan: null, defense: null, debut: Ambiance.tirer('debutZargon') };
       preparerZargon(e);
     }
 
-    // Calcule le plan du monstre suivant (en sautant ceux qui ont été vaincus entre-temps).
+    // Calcule le plan du monstre suivant (en sautant ceux qui ont été vaincus entre-temps),
+    // avec son message d'ambiance (gardé dans l'état pour rester le même après un rechargement).
     function preparerZargon(e) {
       const z = e.zargon;
       z.plan = null;
@@ -630,7 +608,11 @@ const VuePlateau = (() => {
         if (!m) { z.n++; continue; }
         const dep = Regles.valeurMonstre(caracs, m, 'deplacement');
         if (dep === null || Regles.valeurMonstre(caracs, m, 'attaque') === null) { z.plan = { monstre: m.id, erreur: true }; return; }
-        z.plan = { monstre: m.id, ...Plateau.planMonstre(g, e, m, dep) };
+        const plan = { monstre: m.id, ...Plateau.planMonstre(g, e, m, dep) };
+        const h = plan.cible && e.heros.find(k => k.id === plan.cible);
+        const cat = !e.revele.includes(Plateau.idx(L, m.x, m.y)) ? 'ombre' : !plan.chemin.length ? (h ? 'attaque' : 'immobile') : 'approche';
+        plan.ambiance = Ambiance.tirer(cat, { monstre: infoMonstre(m.type).nom, heros: h?.nom || 'les héros', type: m.type });
+        z.plan = plan;
         return;
       }
     }
@@ -640,97 +622,93 @@ const VuePlateau = (() => {
       if (!p) return '';
       const m = etat.monstres.find(k => k.id === p.monstre);
       const nom = nomVisible(m);
-      if (p.erreur) return `${infoMonstre(m.type).nom} : déplacement ou attaque inconnus (Réglages › Caractéristiques). Touchez « Passer ».`;
+      if (p.erreur) return `${infoMonstre(m.type).nom} : déplacement ou attaque inconnus (Réglages › Caractéristiques).`;
       const h = p.cible && etat.heros.find(k => k.id === p.cible);
       const pas = p.chemin.length;
       if (!pas && h) return `${nom} attaque ${h.nom} sans bouger.`;
-      if (!pas) return `${nom} : aucun héros atteignable, il reste sur place.`;
-      return `${nom} avance de ${pas} case${pas > 1 ? 's' : ''}` + (h ? ` et attaque ${h.nom}.` : ' (héros hors d’atteinte ce tour-ci).');
+      if (!pas) return `${nom} reste sur place.`;
+      return `${nom} avance de ${pas} case${pas > 1 ? 's' : ''}` + (h ? ` et attaque ${h.nom}.` : '.');
     }
 
-    // Ligne d'ambiance pour le monstre qui va jouer.
-    function ambiancePlan() {
+    let animation = false; // un monstre est en train de se déplacer à l'écran
+    const attendre = ms => new Promise(r => setTimeout(r, ms));
+
+    // « Suivant » sur la fenêtre d'ambiance : déplacement animé, puis attaque éventuelle.
+    async function validerMonstre() {
       const p = etat.zargon?.plan;
-      if (!p || p.erreur) return null;
+      if (!p || animation) return;
+      if (p.erreur) return passerMonstre();
       const m = etat.monstres.find(k => k.id === p.monstre);
-      if (!m) return null;
-      if (!etat.revele.includes(Plateau.idx(L, m.x, m.y))) return { ambiance: Ambiance.tirer('ombre') };
-      const h = p.cible && etat.heros.find(k => k.id === p.cible);
-      const valeurs = { monstre: infoMonstre(m.type).nom, heros: h?.nom || 'les héros', type: m.type };
-      const cat = !p.chemin.length ? (h ? 'attaque' : 'immobile') : 'approche';
-      return { ambiance: Ambiance.tirer(cat, valeurs) };
-    }
+      const depart = [m.x, m.y];
+      // Animation : on déplace le pion case par case, puis on remet tout en place
+      // avant d'enregistrer le coup pour de bon (pour que « Annuler » fonctionne).
+      animation = true;
+      dessiner();
+      for (const [x, y] of p.chemin) { m.x = x; m.y = y; dessiner(); await attendre(260); }
+      [m.x, m.y] = depart;
+      animation = false;
 
-    function suiteAuto() {
-      if (auto && etat.zargon?.plan && !etat.zargon.defense) setTimeout(() => { if (auto) validerMonstre(); }, 700);
-      if (!etat.zargon?.plan && !etat.zargon?.defense) auto = false;
-    }
-
-    function validerMonstre() {
-      const z = etat.zargon;
-      if (!z?.plan) return;
-      let texte = '';
+      let resultat = null;
       modifier(e => {
-        const z = e.zargon, p = z.plan;
-        const m = e.monstres.find(k => k.id === p.monstre);
-        if (p.erreur) { z.n++; preparerZargon(e); return; }
-        if (p.chemin.length) [m.x, m.y] = p.chemin[p.chemin.length - 1];
-        texte = decrirePlanDans(e, p, m);
+        const z = e.zargon, k = e.monstres.find(q => q.id === p.monstre);
+        if (p.chemin.length) [k.x, k.y] = p.chemin[p.chemin.length - 1];
         if (p.cible) {
-          const tirage = Regles.lancer(Regles.valeurMonstre(caracs, m, 'attaque'));
+          const tirage = Regles.lancer(Regles.valeurMonstre(caracs, k, 'attaque'));
           const cranes = Regles.compter(tirage, 'crane');
-          const h = e.heros.find(k => k.id === p.cible);
-          texte += ` Attaque : ${Regles.afficher(tirage) || '(aucun dé)'} → ${cranes} crâne${cranes > 1 ? 's' : ''}.`;
           if (cranes > 0) {
-            z.defense = { monstre: m.id, heros: h.id, cranes };
+            z.defense = { monstre: k.id, heros: p.cible, tirage, cranes, cle: 'z' + Date.now() };
             z.plan = null;
-            texte += ` ${h.nom} : lancez vos dés de défense.`;
             return;
           }
-          texte += ' Aucune blessure.';
+          // Aucun crâne : le duel s'affiche quand même, avec la conclusion.
+          resultat = { genre: 'zargon', heros: p.cible, monstre: k.id, type: k.type, tirage, cranes: 0, blancs: 0, degats: 0, cle: 'z' + Date.now() };
         }
         z.n++; preparerZargon(e);
       });
-      if (etat.zargon.plan && !etat.zargon.defense) msg(texte, ambiancePlan(), 'Suivant : ' + decrirePlan());
-      else msg(texte);
-      suiteAuto();
+      if (resultat) {
+        const h = etat.heros.find(k => k.id === resultat.heros);
+        resultat.ambiance = Ambiance.tirer('heroIndemne', { heros: h.nom, monstre: infoMonstre(resultat.type).nom });
+        conclusion = resultat;
+      }
+      msg(decrireDernierCoup(p));
+      dessiner();
     }
 
-    // Même texte que decrirePlan, mais au passé, pendant la modification.
-    function decrirePlanDans(e, p, m) {
-      const nom = e.revele.includes(Plateau.idx(L, m.x, m.y)) ? infoMonstre(m.type).nom : 'Un monstre dans l’ombre';
+    function decrireDernierCoup(p) {
+      const m = etat.monstres.find(k => k.id === p.monstre);
       const pas = p.chemin.length;
-      return pas ? `${nom} avance de ${pas} case${pas > 1 ? 's' : ''}.` : `${nom} reste sur place.`;
+      return m ? `${nomVisible(m)} ${pas ? `avance de ${pas} case${pas > 1 ? 's' : ''}` : 'reste sur place'}.` : '';
     }
 
+    // Le joueur indique ses boucliers blancs : blessures, puis conclusion.
     function defendre(blancs) {
-      let texte = '';
+      const d = etat.zargon.defense;
+      const h = etat.heros.find(k => k.id === d.heros);
+      const m = etat.monstres.find(k => k.id === d.monstre);
+      const degats = Math.max(0, d.cranes - blancs);
       modifier(e => {
-        const z = e.zargon, d = z.defense;
-        const h = e.heros.find(k => k.id === d.heros);
-        const degats = Math.max(0, d.cranes - blancs);
-        h.corps = Math.max(0, (h.corps ?? 0) - degats);
-        texte = `${h.nom} : ${blancs} bouclier${blancs > 1 ? 's' : ''} blanc${blancs > 1 ? 's' : ''}. `
-          + (degats ? `${degats} blessure${degats > 1 ? 's' : ''} → ${h.corps} point${h.corps > 1 ? 's' : ''} de Vie.` : 'Aucune blessure.')
-          + (h.corps === 0 ? ` ⚠ ${h.nom} n’a plus de points de Vie : il meurt, sauf potion ou sort de soin (voir sa fiche).` : '');
-        z.defense = null;
-        z.n++; preparerZargon(e);
+        const k = e.heros.find(z => z.id === d.heros);
+        k.corps = Math.max(0, (k.corps ?? 0) - degats);
+        e.zargon.defense = null;
+        e.zargon.n++; preparerZargon(e);
       });
-      if (etat.zargon.plan) msg(texte, ambiancePlan(), 'Suivant : ' + decrirePlan());
-      else msg(texte, 'Tous les monstres ont joué.');
-      suiteAuto();
+      conclusion = {
+        genre: 'zargon', heros: h.id, monstre: m.id, type: m.type, tirage: d.tirage, cranes: d.cranes, blancs, degats, cle: d.cle,
+        ambiance: Ambiance.tirer(degats ? 'heroBlesse' : 'heroIndemne', { heros: h.nom, monstre: infoMonstre(m.type).nom }),
+      };
+      dessiner();
     }
 
     function passerMonstre() {
       modifier(e => { e.zargon.n++; preparerZargon(e); });
-      if (etat.zargon.plan) msg('Monstre passé.', ambiancePlan(), 'Suivant : ' + decrirePlan());
-      else msg('Tous les monstres ont joué.');
+      msg('Monstre passé.');
     }
 
     /* ---------- Attaque d'un héros ---------- */
 
-    let ciblage = false; // le joueur doit toucher un monstre
-    let cible = null;    // monstre choisi : on attend le nombre de crânes
+    let ciblage = false;  // le joueur doit toucher un monstre
+    let combat = null;    // { monstre, ambiance } : duel ouvert, on attend les crânes du héros
+    let conclusion = null; // résultat d'un duel, affiché jusqu'à « Suivant »
 
     // Monstres que le héros actif peut attaquer : visibles, sur une case voisine
     // (pas de diagonale), sans mur ni porte fermée entre les deux.
@@ -746,11 +724,14 @@ const VuePlateau = (() => {
 
     function commencerAttaque() {
       const h = herosActif();
-      if (!ciblesAttaque().length) return msg('Aucun monstre à portée : il faut un monstre visible sur une case voisine (sans diagonale).');
-      ciblage = true; saisieDes = false;
-      msg((etat.tour.actions || 0) >= 1
-        ? `⚠ ${h.nom} a déjà fait une action ce tour-ci (règle : une seule action par tour). Vous pouvez continuer.`
-        : 'Touchez le monstre à attaquer (entouré de rouge).');
+      const cibles = ciblesAttaque();
+      if (!cibles.length) return msg('Aucun monstre à portée : il faut un monstre visible sur une case voisine (sans diagonale).');
+      if ((etat.tour.actions || 0) >= 1) msg(`⚠ ${h.nom} a déjà fait une action ce tour-ci (règle : une seule action par tour). Vous pouvez continuer.`);
+      saisieDes = false;
+      // Un seul monstre à portée : le duel s'ouvre directement.
+      if (cibles.length === 1) return choisirCible(cibles[0].id);
+      ciblage = true;
+      if (!(etat.tour.actions >= 1)) msg('Touchez le monstre à attaquer (entouré de rouge).');
       dessiner();
     }
 
@@ -761,38 +742,175 @@ const VuePlateau = (() => {
         return msg(m.caracs || Regles.infoMonstre(m.type).variable
           ? `Défense de ce ${infoMonstre(m.type).nom} inconnue : la quête ne la donne pas. Corrigez en vue MJ.`
           : `Défense des ${infoMonstre(m.type).nom}s inconnue : remplissez-la dans Réglages › Caractéristiques.`);
-      ciblage = false; cible = id;
-      const n = carac('heros', herosActif().id, 'attaque');
-      msg(`Lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat, puis touchez le nombre de crânes.`);
+      ciblage = false;
+      combat = { monstre: id, ambiance: Ambiance.tirer('attaqueHeros', { heros: herosActif().nom, monstre: infoMonstre(m.type).nom }) };
       dessiner();
     }
 
     // Les crânes du héros moins les boucliers noirs du monstre = points de Vie perdus.
     function resoudreAttaque(cranes) {
       const h = herosActif();
-      const m = etat.monstres.find(k => k.id === cible);
+      const m = etat.monstres.find(k => k.id === combat.monstre);
       const nom = infoMonstre(m.type).nom;
-      const nbDef = Regles.valeurMonstre(caracs, m, 'defense');
-      const tirage = Regles.lancer(nbDef);
+      const tirage = Regles.lancer(Regles.valeurMonstre(caracs, m, 'defense'));
       const noirs = Regles.compter(tirage, 'noir');
       const degats = Math.max(0, cranes - noirs);
-      cible = null;
-      let fin = '', mort = '';
+      const vieAvant = m.corps ?? 1;
+      const vieApres = Math.max(0, vieAvant - degats);
+      combat = null;
       modifier(e => {
         if (e.tour.deplacement) e.tour.deplacement = null; // une action termine le déplacement en cours
         e.tour.actions = (e.tour.actions || 0) + 1;
         const k = e.monstres.find(z => z.id === m.id);
-        if (k.corps == null) k.corps = 1;
-        k.corps = Math.max(0, k.corps - degats);
-        if (k.corps === 0) {
-          e.monstres = e.monstres.filter(z => z.id !== m.id);
-          fin = ` ${nom} est vaincu !`;
-          mort = Ambiance.tirer('mort', { monstre: nom, heros: h.nom, type: m.type });
-        }
-        else fin = degats ? ` ${nom} : ${k.corps} point${k.corps > 1 ? 's' : ''} de Vie restant${k.corps > 1 ? 's' : ''}.` : '';
+        k.corps = vieApres;
+        if (vieApres === 0) e.monstres = e.monstres.filter(z => z.id !== m.id);
       });
-      msg(`${h.nom} : ${cranes} 💀. Défense ${nom} : ${Regles.afficher(tirage) || '(aucun dé)'} → ${noirs} bouclier${noirs > 1 ? 's' : ''} noir${noirs > 1 ? 's' : ''}. `
-        + (degats ? `${degats} blessure${degats > 1 ? 's' : ''}.` : 'Aucune blessure.') + fin, mort ? { ambiance: mort } : null);
+      const valeurs = { heros: h.nom, monstre: nom, type: m.type };
+      conclusion = {
+        genre: 'heros', heros: h.id, monstre: m.id, type: m.type, monstreCourt: infoMonstre(m.type).court,
+        tirage, cranes, noirs, degats, vieMonstre: vieApres, vieMonstreMax: m.corpsMax, cle: 'h' + Date.now(),
+        ambiance: Ambiance.tirer(vieApres === 0 ? 'mort' : degats ? 'monstreBlesse' : 'monstreIndemne', valeurs),
+      };
+      msg('');
+      dessiner();
+    }
+
+    /* ---------- Fenêtres de combat ----------
+       Gauche : le héros ; droite : le monstre. Les dés lancés par l'application
+       « roulent » quelques instants avant de s'arrêter (une seule fois par lancer). */
+
+    const animes = new Set();
+
+    function htmlDes(tirage, cle) {
+      return `<div class="des-lances" data-cle="${cle}" data-final="${tirage.join(',')}">`
+        + tirage.map(f => `<span class="de de-${f}">${Regles.afficher([f])}</span>`).join('')
+        + (tirage.length ? '' : '<span class="discret">aucun dé</span>') + '</div>';
+    }
+
+    // Fait rouler les dés d'une fenêtre qui vient de s'afficher.
+    function animerDes(boite) {
+      const zone = boite.querySelector('.des-lances');
+      if (!zone || animes.has(zone.dataset.cle)) return;
+      animes.add(zone.dataset.cle);
+      const des = [...zone.querySelectorAll('.de')];
+      const faces = ['crane', 'blanc', 'noir'];
+      const suite = boite.querySelectorAll('.apres-des');
+      suite.forEach(e => e.classList.add('masque'));
+      zone.classList.add('roule');
+      let t = 0;
+      const minuterie = setInterval(() => {
+        t += 90;
+        des.forEach(d => { d.textContent = Regles.afficher([faces[Math.floor(Math.random() * 3)]]); });
+        if (t >= 900) {
+          clearInterval(minuterie);
+          const final = zone.dataset.final.split(',');
+          des.forEach((d, k) => { d.textContent = Regles.afficher([final[k]]); });
+          zone.classList.remove('roule');
+          suite.forEach(e => e.classList.remove('masque'));
+        }
+      }, 90);
+    }
+
+    function figurine(cote, html, nom, vie, vieMax, classe = '') {
+      return `<figure class="combattant ${cote} ${classe}">
+        <div class="portrait">${html}</div>
+        <figcaption><strong>${echapperTexte(nom)}</strong><span class="vie">♥ ${vie ?? '?'}${vieMax != null ? ' / ' + vieMax : ''}</span></figcaption>
+      </figure>`;
+    }
+
+    function boutonsNombre(n, attribut) {
+      return Array.from({ length: (n ?? 6) + 1 }, (_, k) => `<button data-${attribut}="${k}">${k}</button>`).join('');
+    }
+
+    function dessinerModale() {
+      const boite = conteneur.querySelector('#pl-modale');
+      const fermer = () => { boite.hidden = true; boite.innerHTML = ''; };
+      if (vueMJ || animation) return fermer();
+      const z = etat.zargon;
+      let html = '';
+
+      if (conclusion) {
+        // Conclusion d'un duel (héros ou monstre attaquant).
+        const c = conclusion;
+        const h = etat.heros.find(k => k.id === c.heros);
+        const mVivant = etat.monstres.find(k => k.id === c.monstre);
+        const nomM = infoMonstre(c.type).nom, court = infoMonstre(c.type).court;
+        const vieM = mVivant ? mVivant.corps : c.vieMonstre ?? 0;
+        const gauche = figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, h.corps === 0 ? 'vaincu' : '');
+        const droite = figurine('droite', Portraits.monstre(c.type, court), nomM, vieM, mVivant?.corpsMax ?? c.vieMonstreMax, vieM === 0 ? 'vaincu' : '');
+        let texte;
+        if (c.genre === 'zargon') {
+          texte = c.cranes === 0
+            ? `${nomM} n’obtient aucun crâne : ${h.nom} n’a rien à parer.`
+            : `${c.cranes} crâne${c.cranes > 1 ? 's' : ''} contre ${c.blancs} bouclier${c.blancs > 1 ? 's' : ''} blanc${c.blancs > 1 ? 's' : ''} : `
+              + (c.degats ? `${h.nom} perd ${c.degats} point${c.degats > 1 ? 's' : ''} de Vie.` : 'aucune blessure.');
+          if (h.corps === 0) texte += ` ⚠ ${h.nom} n’a plus de points de Vie : il meurt, sauf potion ou sort de soin (voir sa fiche).`;
+        } else {
+          texte = `${c.cranes} crâne${c.cranes > 1 ? 's' : ''} contre ${c.noirs} bouclier${c.noirs > 1 ? 's' : ''} noir${c.noirs > 1 ? 's' : ''} : `
+            + (c.degats ? `${nomM} perd ${c.degats} point${c.degats > 1 ? 's' : ''} de Vie.` : 'aucune blessure.')
+            + (c.vieMonstre === 0 ? ` ${nomM} est vaincu !` : '');
+        }
+        html = `<div class="duel">${gauche}<div class="centre">⚔</div>${droite}</div>
+          <p class="legende">${c.genre === 'zargon' ? `Attaque de ${nomM}` : `Défense de ${nomM}`}</p>
+          ${htmlDes(c.tirage, c.cle)}
+          <div class="apres-des">
+            <p class="resultat">${echapperTexte(texte)}</p>
+            <p class="ambiance">${echapperTexte(c.ambiance)}</p>
+            <div class="choix"><button id="md-suivant" class="principal">${c.genre === 'zargon' ? 'Suivant' : 'Fermer'}</button></div>
+          </div>`;
+      } else if (combat) {
+        // Duel lancé par le héros actif : on attend ses crânes.
+        const h = herosActif();
+        const m = etat.monstres.find(k => k.id === combat.monstre);
+        const n = carac('heros', h.id, 'attaque');
+        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax)}</div>
+          <p class="ambiance">${echapperTexte(combat.ambiance)}</p>
+          <p class="question">${h.nom} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat. Combien de crânes ?</p>
+          <div class="choix nombres">${boutonsNombre(n, 'cranes')}</div>
+          <div class="choix"><button id="md-annuler-combat">Annuler</button></div>`;
+      } else if (z?.defense) {
+        // Un monstre attaque : ses dés roulent, puis le joueur indique ses boucliers blancs.
+        const d = z.defense;
+        const h = etat.heros.find(k => k.id === d.heros);
+        const m = etat.monstres.find(k => k.id === d.monstre);
+        const n = carac('heros', h.id, 'defense');
+        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax)}</div>
+          <p class="legende">Attaque de ${infoMonstre(m.type).nom}</p>
+          ${htmlDes(d.tirage || [], d.cle || 'ancien')}
+          <div class="apres-des">
+            <p class="resultat">${d.cranes} crâne${d.cranes > 1 ? 's' : ''} !</p>
+            <p class="question">${h.nom} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de défense. Combien de boucliers blancs ?</p>
+            <div class="choix nombres">${boutonsNombre(n, 'blancs')}</div>
+          </div>`;
+      } else if (z?.plan && !herosActif()) {
+        // Fenêtre d'ambiance avant le coup d'un monstre.
+        const p = z.plan;
+        const m = etat.monstres.find(k => k.id === p.monstre);
+        const cache = !etat.revele.includes(Plateau.idx(L, m.x, m.y));
+        html = `<p class="titre-zargon">Tour de Zargon <span class="discret">· ${z.n + 1} / ${z.file.length}</span></p>
+          ${z.n === 0 && z.debut ? `<p class="ambiance">${echapperTexte(z.debut)}</p>` : ''}
+          ${p.erreur ? `<p class="erreur">${echapperTexte(decrirePlan())}</p>` : `
+            <div class="duel seul">${figurine('droite', cache ? Portraits.monstre('?', '?') : Portraits.monstre(m.type, infoMonstre(m.type).court), cache ? '???' : infoMonstre(m.type).nom, cache ? '?' : m.corps, cache ? null : m.corpsMax)}</div>
+            <p class="ambiance grande">${echapperTexte(p.ambiance)}</p>`}
+          <div class="choix">
+            ${p.erreur ? '' : '<button id="md-valider" class="principal">Suivant</button>'}
+            <button id="md-passer">Passer ce monstre</button>
+          </div>`;
+      }
+
+      if (!html) return fermer();
+      boite.innerHTML = `<div class="carte-modale">${html}</div>`;
+      boite.hidden = false;
+      const sur = (sel, f) => boite.querySelector(sel)?.addEventListener('click', f);
+      sur('#md-valider', validerMonstre);
+      sur('#md-passer', passerMonstre);
+      sur('#md-suivant', () => { conclusion = null; dessiner(); });
+      sur('#md-annuler-combat', () => { combat = null; dessiner(); });
+      boite.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
+      boite.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
+      animerDes(boite);
     }
 
     /* ---------- Fiche d'un héros ---------- */
