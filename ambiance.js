@@ -174,6 +174,29 @@ const Ambiance = (() => {
       'Un faux mouvement… le piège se déclenche sous les mains de {heros} !',
       'Le mécanisme résiste, puis claque : raté !',
     ],
+    // Trésors
+    tresorTrouve: [
+      '{heros} soulève une pierre… et ses yeux brillent.',
+      'Quelque chose luit dans la poussière. {heros} s’en empare.',
+      '{heros} fouille avec soin et ne repart pas les mains vides.',
+      'Un éclat doré attire l’œil de {heros}. La chance sourit aux audacieux.',
+    ],
+    tresorRien: [
+      '{heros} retourne tout : poussière, ossements et toiles d’araignée.',
+      'Rien de valeur ici. Quelqu’un est passé avant.',
+      '{heros} soupire : cette pièce a déjà été pillée.',
+    ],
+    errant: [
+      'Un grognement derrière {heros} : quelque chose a entendu la fouille !',
+      'Une ombre surgit d’un recoin et fond sur {heros} !',
+      'Le bruit a attiré du monde… {monstre} jaillit de l’obscurité !',
+      'Une trappe s’ouvre dans le mur : {monstre} en sort, furieux !',
+    ],
+    piegeMeuble: [
+      'Un déclic sec : le piège du meuble se déclenche au nez de {heros} !',
+      '{heros} soulève le couvercle… trop vite.',
+      'Un nuage âcre s’échappe quand {heros} touche le meuble !',
+    ],
     // Un monstre est vaincu (en plus des messages propres à chaque type, plus bas)
     mort: [
       '{monstre} s’effondre dans un dernier râle.',

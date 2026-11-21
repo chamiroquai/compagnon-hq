@@ -413,3 +413,7 @@ button.petit-bouton { min-width: 40px; min-height: 40px; font-size: 1rem; }
 .piege-bloc.declenche rect { fill: #6e6a62; stroke: #2b2620; stroke-width: 2; stroke-dasharray: none; }
 .piege { pointer-events: none; }
 .piege-bloc.declenche rect { fill: #57524a; stroke: #1b1712; stroke-width: 3; }
+
+/* ---------- Trésors et meubles piégés (v0.14.0) ---------- */
+.alerte-meuble { fill: #ffd76a; font-size: 14px; font-weight: 700; text-anchor: middle; pointer-events: none; }
+.alerte-meuble.cache { fill: #ff8a7a; }

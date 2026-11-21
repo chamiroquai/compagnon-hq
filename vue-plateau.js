@@ -44,6 +44,19 @@ const VuePlateau = (() => {
       partie.quete = quete; partie.etat = etat; enregistrer();
     }
     if (!etat.pieges) etat.pieges = [];
+    // Quête de démonstration commencée avant la v0.14.0 : trésors, monstre errant et coffre piégé.
+    if (quete.id === QUETE_DEMO.id && !quete.tresors) {
+      quete.tresors = JSON.parse(JSON.stringify(QUETE_DEMO.tresors));
+      quete.monstreErrant = QUETE_DEMO.monstreErrant;
+      for (const m of quete.mobilier || []) {
+        const ref = QUETE_DEMO.mobilier.find(k => k.id === m.id);
+        if (ref?.piege) m.piege = { ...ref.piege };
+      }
+      partie.quete = quete; enregistrer();
+    }
+    if (!etat.piegesMobilier) etat.piegesMobilier = Object.fromEntries((quete.mobilier || []).filter(m => m.piege).map(m => [m.id, { trouve: false, declenche: false, desamorce: false }]));
+    if (!etat.tresorsPris) etat.tresorsPris = [];
+    if (!etat.fouillesTresor) etat.fouillesTresor = {};
     const caracs = options.caracs || Regles.caracsVides();
     const carac = (famille, type, champ) => Regles.valeur(caracs, famille, type, champ);
     // Caractéristique d'un héros : celle de son personnage (registre), sinon celle des Réglages.
@@ -240,6 +253,12 @@ const VuePlateau = (() => {
         el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: (m.l || 1) * T - 8, height: (m.h || 1) * T - 8, rx: 3 }, gr);
         const t = el('text', { x: (m.x + (m.l || 1) / 2) * T, y: (m.y + (m.h || 1) / 2) * T + 4, class: 'etiquette' }, gr);
         t.textContent = (m.l || 1) > 1 || (m.h || 1) > 1 ? m.nom : m.nom.slice(0, 3);
+        // Meuble piégé : ⚠ quand il est repéré (ou en vue MJ), tant qu'il n'est ni désamorcé ni déclenché.
+        const st = etat.piegesMobilier?.[m.id];
+        if (m.piege && st && !st.desamorce && !st.declenche && (st.trouve || vueMJ)) {
+          const a = el('text', { x: m.x * T + 9, y: m.y * T + 15, class: 'alerte-meuble' + (st.trouve ? '' : ' cache') }, gr);
+          a.textContent = '⚠';
+        }
       }
 
       // 3 bis. Pièges : connus (repérés ou déclenchés) ; en vue MJ, aussi les pièges cachés.
@@ -1006,21 +1025,225 @@ const VuePlateau = (() => {
       if (monstreVisible()) avert.push('Un monstre est visible : la règle interdit de fouiller.');
       const portee = Plateau.porteeDe(partie.reglages);
       const trouves = genre === 'portes' ? Plateau.fouillerPortes(g, etat, h, portee) : Plateau.fouillerPieges(g, etat, h, portee);
+      // Meubles piégés repérés par la fouille de pièges.
+      const zone = Plateau.casesFouillables(g, etat, h, portee);
+      const meubles = genre === 'portes' ? [] : (quete.mobilier || []).filter(m => {
+        const st = etat.piegesMobilier[m.id];
+        return m.piege && st && !st.trouve && !st.declenche && !st.desamorce && casesMeuble(m).some(c => zone.has(c));
+      });
       modifier(e => {
         if (e.tour.deplacement) e.tour.deplacement = null;
         e.tour.actions = (e.tour.actions || 0) + 1;
         if (genre === 'portes') e.secretesTrouvees.push(...trouves);
         else for (const id of trouves) e.pieges.find(z => z.id === id).trouve = true;
+        for (const m of meubles) e.piegesMobilier[m.id].trouve = true;
       });
+      trouves.push(...meubles.map(m => 'meuble:' + m.id));
       const n = trouves.length;
       const texte = genre === 'portes'
         ? (n ? `${n} porte${n > 1 ? 's' : ''} secrète${n > 1 ? 's' : ''} découverte${n > 1 ? 's' : ''} !` : 'Aucune porte secrète ici.')
-        : (n ? `${n} piège${n > 1 ? 's' : ''} repéré${n > 1 ? 's' : ''} : ${trouves.map(id => NOMS_PIEGES[etat.pieges.find(z => z.id === id).type]).join(', ')}.` : 'Aucun piège ici.');
+        : (n ? `${n} piège${n > 1 ? 's' : ''} repéré${n > 1 ? 's' : ''} : ${trouves.map(id => id.startsWith('meuble:')
+            ? `${quete.mobilier.find(m => 'meuble:' + m.id === id).nom} piégé`
+            : NOMS_PIEGES[etat.pieges.find(z => z.id === id).type]).join(', ')}.` : 'Aucun piège ici.');
       evenement = {
         genre: 'fin', titre: genre === 'portes' ? 'Fouille : portes secrètes' : 'Fouille : pièges',
         texte, avertissement: avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '',
         ambiance: Ambiance.tirer(n ? (genre === 'portes' ? 'fouillePorte' : 'fouillePiege') : 'fouilleRien', { heros: h.nom }),
       };
+      dessiner();
+    }
+
+    /* ---------- Fouille de trésor, pioche, monstre errant, meubles piégés ----------
+       Trésor propre à la pièce (quête) pour le premier qui fouille ; sinon une carte :
+       pioche virtuelle (cartes saisies dans les Réglages) ou vraie carte piochée.
+       Un meuble piégé non désamorcé se déclenche à la fouille de trésor. */
+
+    const cartesTresor = options.cartesTresor || [];
+
+    function casesMeuble(m) {
+      const res = [];
+      for (let dx = 0; dx < (m.l || 1); dx++) for (let dy = 0; dy < (m.h || 1); dy++) res.push(Plateau.idx(L, m.x + dx, m.y + dy));
+      return res;
+    }
+
+    function fouillerTresor() {
+      const h = herosActif();
+      const piece = Plateau.pieceDe(g, h.x, h.y);
+      if (!piece) return msg('Les trésors ne se trouvent que dans les pièces, pas dans les couloirs.');
+      const avert = [];
+      if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
+      if (etat.monstres.some(m => Plateau.pieceDe(g, m.x, m.y) === piece && etat.revele.includes(Plateau.idx(L, m.x, m.y))))
+        avert.push('Un monstre est dans la pièce : la règle interdit de fouiller.');
+      if ((etat.fouillesTresor[h.id] || []).includes(piece)) avert.push(`${h.nom} a déjà fouillé cette pièce (une fois par héros).`);
+      const avertissement = avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '';
+      const piegeants = (quete.mobilier || []).filter(m => m.piege && Plateau.pieceDe(g, m.x, m.y) === piece
+        && !etat.piegesMobilier[m.id]?.desamorce && !etat.piegesMobilier[m.id]?.declenche);
+      const degats = piegeants.reduce((t, m) => t + (m.piege.degats || 0), 0);
+      let tresor = null, vie;
+      modifier(e => {
+        if (e.tour.deplacement) e.tour.deplacement = null;
+        e.tour.actions = (e.tour.actions || 0) + 1;
+        (e.fouillesTresor[h.id] = e.fouillesTresor[h.id] || []).push(piece);
+        if (piegeants.length) {
+          for (const m of piegeants) e.piegesMobilier[m.id] = { ...e.piegesMobilier[m.id], declenche: true, trouve: true };
+          vie = blesser(e, h.id, degats);
+          finParPiege(e);
+          return;
+        }
+        const t = quete.tresors?.[piece];
+        if (t && !e.tresorsPris.includes(piece)) {
+          e.tresorsPris.push(piece);
+          const k = e.heros.find(z => z.id === h.id);
+          if (t.or) k.or = (k.or || 0) + t.or;
+          for (const o of t.objets || []) (k.inventaire = k.inventaire || []).push({ nom: o });
+          tresor = t;
+        }
+      });
+      if (piegeants.length) {
+        evenement = { genre: 'fin', titre: 'Meuble piégé !', avertissement, ambiance: Ambiance.tirer('piegeMeuble', { heros: h.nom }),
+          texte: piegeants.map(m => `${m.nom} : ${m.piege.texte || 'piège !'}`).join(' ')
+            + (degats ? ` ${h.nom} perd ${degats} point${degats > 1 ? 's' : ''} de Vie (reste ${vie}).` : '') + ' Son tour s’arrête ; pas de trésor cette fois.' };
+      } else if (tresor) {
+        evenement = { genre: 'fin', titre: 'Trésor !', avertissement, ambiance: Ambiance.tirer('tresorTrouve', { heros: h.nom }),
+          texte: [tresor.texte, tresor.or ? `+${tresor.or} pièces d’or.` : '', (tresor.objets || []).length ? `Dans l’inventaire : ${tresor.objets.join(', ')}.` : ''].filter(Boolean).join(' ') };
+      } else {
+        evenement = { genre: 'pioche', avertissement };
+      }
+      dessiner();
+    }
+
+    function finCarte(titre, texte, cat = 'tresorTrouve') {
+      const h = herosActif();
+      evenement = { genre: 'fin', titre, texte, ambiance: cat ? Ambiance.tirer(cat, { heros: h.nom }) : '' };
+      dessiner();
+    }
+
+    // Pioche virtuelle : or, potions et objets sortent de la pioche jusqu'à la quête suivante ;
+    // monstres errants, dangers et cartes « rien » y retournent (pioche remélangée).
+    function piocherVirtuelle() {
+      const pioche = etat.pioche || cartesTresor.flatMap((c, i) => Array(Math.max(1, c.nombre || 1)).fill(i));
+      if (!pioche.length) return finCarte('Pioche vide', 'Toutes les cartes « or » et « potion/objet » ont été prises pendant cette quête.', 'tresorRien');
+      const k = Math.floor(Math.random() * pioche.length);
+      const carte = cartesTresor[pioche[k]];
+      modifier(e => {
+        e.pioche = pioche.slice();
+        if (['or', 'potion', 'objet'].includes(carte.type)) e.pioche.splice(k, 1);
+      });
+      appliquerCarte(carte);
+    }
+
+    function appliquerCarte(carte) {
+      const h = herosActif();
+      const titre = carte.nom ? `Carte : ${carte.nom}` : 'Carte trésor';
+      const texte = carte.texte ? carte.texte + ' ' : '';
+      if (carte.type === 'or') {
+        modifier(e => { const k = e.heros.find(z => z.id === h.id); k.or = (k.or || 0) + (carte.valeur || 0); });
+        return finCarte(titre, `${texte}+${carte.valeur || 0} pièces d’or pour ${h.nom}.`);
+      }
+      if (carte.type === 'potion' || carte.type === 'objet') {
+        modifier(e => { const k = e.heros.find(z => z.id === h.id); (k.inventaire = k.inventaire || []).push({ nom: carte.nom || 'Objet' }); });
+        return finCarte(titre, `${texte}« ${carte.nom || 'Objet'} » ajouté à l’inventaire de ${h.nom}.`);
+      }
+      if (carte.type === 'danger') {
+        let vie;
+        modifier(e => { vie = blesser(e, h.id, carte.valeur || 0); });
+        return finCarte(titre, `${texte}${carte.valeur ? `${h.nom} perd ${carte.valeur} point${carte.valeur > 1 ? 's' : ''} de Vie (reste ${vie}).` : ''}`, null);
+      }
+      if (carte.type === 'errant') return monstreErrant();
+      modifier(() => {}); // pour garder la trace de la pioche dans l'historique
+      finCarte(titre, `${texte}Rien de plus.`, 'tresorRien');
+    }
+
+    // Vraie carte piochée : le joueur dit ce qu'elle donne.
+    function carteReelle(type) {
+      if (type === 'or') {
+        const n = parseInt(prompt('Combien de pièces d’or ?', '25'), 10);
+        if (!Number.isFinite(n)) return;
+        return appliquerCarte({ type: 'or', valeur: Math.max(0, n) });
+      }
+      if (type === 'objet') {
+        const nom = prompt('Nom de la potion ou de l’objet :');
+        if (!nom || !nom.trim()) return;
+        return appliquerCarte({ type: 'objet', nom: nom.trim().slice(0, 80) });
+      }
+      if (type === 'danger') {
+        const n = parseInt(prompt('Points de Vie perdus (0 si aucun) :', '0'), 10);
+        if (!Number.isFinite(n)) return;
+        return appliquerCarte({ type: 'danger', nom: 'Danger', valeur: Math.max(0, n) });
+      }
+      appliquerCarte({ type });
+    }
+
+    function monstreErrant(type = quete.monstreErrant) {
+      if (!type) { evenement = { genre: 'choixErrant' }; return dessiner(); }
+      const h = herosActif();
+      const c = Plateau.caseLibreProche(g, etat, h.x, h.y);
+      const nom = infoMonstre(type).nom;
+      if (!c) return finCarte('Monstre errant', `Un ${nom} rôde, mais il n’y a aucune place pour lui. (Posez-le en vue MJ.)`, null);
+      const id = 'err' + Date.now();
+      let m;
+      modifier(e => {
+        m = { id, type, x: c[0], y: c[1], vu: true };
+        const v = Regles.valeurMonstre(caracs, m, 'corps');
+        if (v !== null) m.corps = m.corpsMax = v;
+        e.monstres.push(m);
+      });
+      const ambiance = Ambiance.tirer('errant', { heros: h.nom, monstre: nom });
+      const att = caracMonstre(m, 'attaque');
+      if (att === null) return finCarte('Monstre errant !', `${nom} surgit à côté de ${h.nom}. (Attaque inconnue : Réglages › Caractéristiques.)`, null);
+      const tirage = Regles.lancer(att);
+      const cranes = Regles.compter(tirage, 'crane');
+      evenement = cranes
+        ? { genre: 'defenseErrant', monstre: id, tirage, cranes, cle: 'e' + Date.now(), ambiance }
+        : { genre: 'fin', titre: 'Monstre errant !', ambiance, texte: `${nom} surgit et attaque ${h.nom} : ${Regles.afficher(tirage)} — aucun crâne, aucune blessure.` };
+      dessiner();
+    }
+
+    function defendreErrant(blancs) {
+      const h = herosActif(), ev = evenement;
+      const m = etat.monstres.find(k => k.id === ev.monstre);
+      const degats = Math.max(0, ev.cranes - blancs);
+      let vie;
+      modifier(e => { vie = blesser(e, h.id, degats); });
+      evenement = { genre: 'fin', titre: 'Monstre errant', ambiance: Ambiance.tirer(degats ? 'heroBlesse' : 'heroIndemne', { heros: h.nom, monstre: infoMonstre(m.type).nom }),
+        texte: `${ev.cranes} crâne${ev.cranes > 1 ? 's' : ''} contre ${blancs} bouclier${blancs > 1 ? 's' : ''} blanc${blancs > 1 ? 's' : ''} : `
+          + (degats ? `${h.nom} perd ${degats} point${degats > 1 ? 's' : ''} de Vie (reste ${vie}).` : 'aucune blessure.')
+          + (vie === 0 ? ` ⚠ ${h.nom} n’a plus de points de Vie : il meurt, sauf potion ou sort de soin.` : '') };
+      dessiner();
+    }
+
+    // Meubles piégés repérés que le héros actif peut désamorcer (case voisine, trousse ou nain).
+    function meublesDesamorcables() {
+      const h = herosActif();
+      if (!h) return [];
+      const nain = (h.classe || h.id) === 'nain';
+      const trousse = (h.inventaire || []).some(o => /trousse/i.test(o.nom));
+      if (!nain && !trousse) return [];
+      const ici = Plateau.idx(L, h.x, h.y);
+      return (quete.mobilier || []).filter(m => {
+        const st = etat.piegesMobilier[m.id];
+        return m.piege && st?.trouve && !st.desamorce && !st.declenche && casesMeuble(m).some(c =>
+          Math.abs((c % L) - h.x) + Math.abs(Math.floor(c / L) - h.y) === 1 && Plateau.ouvert(g, etat, ici, c));
+      });
+    }
+
+    function resoudreDesamorcageMeuble(face) {
+      const h = herosActif(), ev = evenement;
+      const nain = (h.classe || h.id) === 'nain';
+      const m = quete.mobilier.find(k => k.id === ev.meuble);
+      const echec = nain ? face === 'noir' : face === 'crane';
+      let vie;
+      modifier(e => {
+        if (e.tour.deplacement) e.tour.deplacement = null;
+        e.tour.actions = (e.tour.actions || 0) + 1;
+        if (echec) { e.piegesMobilier[m.id].declenche = true; vie = blesser(e, h.id, m.piege.degats || 0); finParPiege(e); }
+        else e.piegesMobilier[m.id].desamorce = true;
+      });
+      evenement = echec
+        ? { genre: 'fin', titre: 'Raté !', ambiance: Ambiance.tirer('desamorceRate', { heros: h.nom }),
+            texte: `${m.piege.texte || 'Le piège se déclenche !'} ${m.piege.degats ? `${h.nom} perd ${m.piege.degats} point${m.piege.degats > 1 ? 's' : ''} de Vie (reste ${vie}).` : ''} Son tour s’arrête.` }
+        : { genre: 'fin', titre: 'Piège désamorcé', ambiance: Ambiance.tirer('desamorceOk', { heros: h.nom }),
+            texte: `${m.nom} n’est plus dangereux : la pièce peut être fouillée pour un trésor.` };
       dessiner();
     }
 
@@ -1062,6 +1285,41 @@ const VuePlateau = (() => {
             <button id="ev-annuler">Annuler</button>
           </div>`;
       }
+      if (ev.genre === 'pioche') return `${tete}<p class="titre-zargon">Fouille : trésor</p>
+        ${ev.avertissement ? `<p class="erreur petit">${echapperTexte(ev.avertissement)}</p>` : ''}
+        <p>Pas de trésor propre à cette pièce : on pioche une carte trésor.</p>
+        ${cartesTresor.length ? '<div class="choix"><button id="ev-piocher" class="principal">Piocher une carte</button></div>'
+          : '<p class="discret petit">Pioche virtuelle vide : ajoutez vos cartes dans Réglages › Cartes trésor.</p>'}
+        <h3 class="titre-section">Ou : j’ai pioché une vraie carte</h3>
+        <div class="choix"><button data-carte="or">Pièces d’or</button><button data-carte="objet">Potion ou objet</button>
+          <button data-carte="errant">Monstre errant</button><button data-carte="danger">Danger</button><button data-carte="rien">Rien</button></div>`;
+      if (ev.genre === 'choixErrant') return `${tete}<p class="titre-zargon">Monstre errant</p>
+        <p class="question">La quête ne précise pas le monstre errant : lequel surgit ?</p>
+        <div class="choix">${Regles.TYPES_MONSTRES_REGLES.map(t => `<button data-errant="${t.id}">${t.nom}</button>`).join('')}</div>`;
+      if (ev.genre === 'defenseErrant') {
+        const m = etat.monstres.find(k => k.id === ev.monstre);
+        const n = caracHeros(h, 'defense');
+        return `<p class="titre-zargon">Monstre errant !</p>
+          <div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'defenseur')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'attaquant')}</div>
+          ${amb}
+          <p class="legende">Attaque de ${infoMonstre(m.type).nom}</p>
+          ${htmlDes(ev.tirage, ev.cle)}
+          <div class="apres-des">
+            <p class="resultat">${ev.cranes} crâne${ev.cranes > 1 ? 's' : ''} !</p>
+            <p class="question">${h.nom} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de défense. Combien de boucliers blancs ?</p>
+            <div class="choix nombres">${boutonsNombre(n, 'blancs-errant')}</div>
+          </div>`;
+      }
+      if (ev.genre === 'desarmerMeuble') {
+        const m = quete.mobilier.find(k => k.id === ev.meuble);
+        const nain = (h.classe || h.id) === 'nain';
+        return `${tete}<p class="titre-zargon">Désamorcer : ${echapperTexte(m.nom)}</p>
+          <p class="question">${h.nom} : lancez 1 dé de combat. Qu’obtenez-vous ?</p>
+          <p class="discret petit">Échec sur ${nain ? 'un bouclier noir (talent du nain)' : 'un crâne (trousse à outils)'}.</p>
+          <div class="choix"><button data-face-meuble="crane">💀 Crâne</button><button data-face-meuble="blanc">🛡️ Bouclier blanc</button><button data-face-meuble="noir">⚫ Bouclier noir</button></div>
+          <div class="choix"><button id="ev-annuler">Annuler</button></div>`;
+      }
       if (ev.genre === 'desarmer') {
         const p = etat.pieges.find(q => q.id === ev.piege);
         const nain = (h.classe || h.id) === 'nain';
@@ -1085,6 +1343,11 @@ const VuePlateau = (() => {
       boite.querySelectorAll('[data-abri]').forEach(b => b.addEventListener('click', () => allerApresBloc(casesApresBloc(evenement)[+b.dataset.abri].c)));
       boite.querySelectorAll('[data-saut]').forEach(b => b.addEventListener('click', () => sauter(b.dataset.saut === '1')));
       boite.querySelectorAll('[data-face]').forEach(b => b.addEventListener('click', () => resoudreDesamorcage(b.dataset.face)));
+      sur('#ev-piocher', piocherVirtuelle);
+      boite.querySelectorAll('[data-carte]').forEach(b => b.addEventListener('click', () => carteReelle(b.dataset.carte)));
+      boite.querySelectorAll('[data-errant]').forEach(b => b.addEventListener('click', () => monstreErrant(b.dataset.errant)));
+      boite.querySelectorAll('[data-blancs-errant]').forEach(b => b.addEventListener('click', () => defendreErrant(+b.dataset.blancsErrant)));
+      boite.querySelectorAll('[data-face-meuble]').forEach(b => b.addEventListener('click', () => resoudreDesamorcageMeuble(b.dataset.faceMeuble)));
     }
 
     /* ---------- Fenêtres de combat ----------
@@ -1243,12 +1506,14 @@ const VuePlateau = (() => {
             <h3 class="titre-section">Actions${fait ? ' ⚠' : ''}</h3>
             <div class="choix">
               ${cibles.length ? `<button id="md-attaquer" class="${fait ? '' : 'principal'}">Attaquer</button>` : ''}
+              <button id="md-fouille-tresor">Fouiller : trésor</button>
               <button id="md-fouille-portes">Fouiller : portes secrètes</button>
               <button id="md-fouille-pieges">Fouiller : pièges</button>
               ${desamorcables.length ? '<button id="md-desamorcer">Désamorcer le piège</button>' : ''}
+              ${meublesDesamorcables().map(m => `<button data-desarmer-meuble="${m.id}">Désamorcer : ${echapperTexte(m.nom)}</button>`).join('')}
             </div>
             ${monstreVisible() ? '<p class="discret petit">Un monstre est visible : les règles interdisent de fouiller (l’application vous laissera faire, avec un avertissement).</p>' : ''}
-            <p class="discret petit">La fouille de trésor et les sorts arriveront aux prochaines étapes.</p>
+            <p class="discret petit">Les sorts arriveront à la prochaine étape.</p>
             <div class="choix"><button id="md-fiche">Fiche de ${echapperTexte(h.nom)}</button></div>`;
         }
       }
@@ -1267,6 +1532,8 @@ const VuePlateau = (() => {
       sur('#md-terminer-depl', terminerDeplacement);
       sur('#md-attaquer', () => { fenetreActions = null; commencerAttaque(); });
       sur('#md-fouille-portes', () => { fenetreActions = null; fouiller('portes'); });
+      sur('#md-fouille-tresor', () => { fenetreActions = null; fouillerTresor(); });
+      boite.querySelectorAll('[data-desarmer-meuble]').forEach(b => b.addEventListener('click', () => { fenetreActions = null; evenement = { genre: 'desarmerMeuble', meuble: b.dataset.desarmerMeuble }; dessiner(); }));
       sur('#md-fouille-pieges', () => { fenetreActions = null; fouiller('pieges'); });
       sur('#md-desamorcer', () => { fenetreActions = null; evenement = { genre: 'desarmer', piege: piegesDesamorcables()[0].id }; dessiner(); });
       sur('#md-fiche', () => { fenetreActions = null; dessiner(); ouvrirFiche(herosActif().id); });

@@ -340,6 +340,35 @@ const Plateau = (() => {
     return (etat.pieges || []).filter(p => !p.trouve && !p.declenche && zone.has(idx(g.L, p.x, p.y))).map(p => p.id);
   }
 
+  // Lettre de la pièce où se trouve la case, ou null (couloir, roche).
+  function pieceDe(g, x, y) {
+    const z = g.zones[idx(g.L, x, y)];
+    return estPiece(z) ? z : null;
+  }
+
+  // Case libre la plus proche de (x, y), en avançant de case en case sans traverser les murs
+  // (pour poser un monstre errant à côté du héros qui fouille).
+  function caseLibreProche(g, etat, x, y) {
+    const depart = idx(g.L, x, y);
+    const vus = new Set([depart]);
+    const file = [depart];
+    const occupee = c => {
+      const cx = c % g.L, cy = Math.floor(c / g.L);
+      return etat.heros.some(h => h.x === cx && h.y === cy) || etat.monstres.some(m => m.x === cx && m.y === cy)
+        || meubleEn(g, cx, cy) || eboulementEn(etat, cx, cy) || piegeEn(etat, cx, cy);
+    };
+    while (file.length) {
+      const c = file.shift();
+      for (const v of voisins(g, c)) {
+        if (vus.has(v) || !ouvert(g, etat, c, v)) continue;
+        vus.add(v);
+        if (!occupee(v)) return [v % g.L, Math.floor(v / g.L)];
+        file.push(v);
+      }
+    }
+    return null;
+  }
+
   /* ---------- Réglages de vision ---------- */
 
   // Portée de vue dans les couloirs, d'après les réglages de la partie.
@@ -380,6 +409,10 @@ const Plateau = (() => {
       monstres: (quete.monstres || []).map(m => ({ ...m })),
       // Pièges : trouve = repéré par une fouille ; declenche = tombé dedans (fosse, bloc).
       pieges: (quete.pieges || []).map(p => ({ ...p, trouve: false, declenche: false })),
+      // Meubles piégés : id du meuble → { trouve, declenche, desamorce }.
+      piegesMobilier: Object.fromEntries((quete.mobilier || []).filter(m => m.piege).map(m => [m.id, { trouve: false, declenche: false, desamorce: false }])),
+      tresorsPris: [],      // pièces dont le trésor propre a été trouvé
+      fouillesTresor: {},   // héros → pièces qu'il a déjà fouillées pour un trésor
       portesOuvertes: [],
       secretesTrouvees: [],
       revele: [],
@@ -438,5 +471,5 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, piegeEn, eboulementEn, fosseEn, casesFouillables, fouillerPortes, fouillerPieges, HEROS };
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, fouillerPortes, fouillerPieges, HEROS };
 })();

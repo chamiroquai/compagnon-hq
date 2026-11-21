@@ -68,12 +68,21 @@ const QUETE_DEMO = {
   ],
   // Mobilier : rectangle de l × h cases à partir de (x, y).
   mobilier: [
-    { id: 'm1', type: 'coffre', nom: 'Coffre', x: 1, y: 1, l: 1, h: 1 },
+    // piege : coffre ou meuble piégé, déclenché par une fouille de trésor tant qu'il n'est pas désamorcé.
+    { id: 'm1', type: 'coffre', nom: 'Coffre', x: 1, y: 1, l: 1, h: 1, piege: { texte: 'Une aiguille jaillit de la serrure !', degats: 1 } },
     { id: 'm2', type: 'table', nom: 'Table', x: 9, y: 11, l: 3, h: 2 },
     { id: 'm3', type: 'etagere', nom: 'Étagère', x: 15, y: 1, l: 3, h: 1 },
     { id: 'm4', type: 'tombeau', nom: 'Tombeau', x: 17, y: 11, l: 1, h: 2 },
     { id: 'm5', type: 'cheminee', nom: 'Cheminée', x: 2, y: 17, l: 3, h: 1 },
   ],
+  // Trésors propres à la quête, par pièce (lettre du plateau) : trouvés par le premier héros
+  // qui fouille la pièce. Ailleurs, on pioche une carte trésor.
+  tresors: {
+    A: { texte: 'Au fond du coffre, sous de vieux chiffons : une bourse bien remplie.', or: 30 },
+    J: { texte: 'Sous la table, une dalle descellée cache une petite fiole.', objets: ['Fiole de soin (démonstration)'] },
+  },
+  // Monstre errant de la quête (cartes « monstre errant » de la pioche).
+  monstreErrant: 'orque',
   // Pièges : fosse, bloc (qui tombe) ou lance. Cachés tant qu'une fouille ne les a pas repérés.
   pieges: [
     { id: 't1', type: 'lance', x: 12, y: 2 },

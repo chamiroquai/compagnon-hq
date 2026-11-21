@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.13.2';
+const VERSION_APP = '0.14.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -116,8 +116,9 @@ async function afficherPartie(id) {
     document.body.classList.add('mode-jeu');
     vue.innerHTML = '<div id="zone-plateau" class="zone-jeu"></div>';
     const caracs = await lireCaracs();
+    const cartesTresor = await Stockage.lireReglage('cartesTresor') || [];
     VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, {
-      quitter: afficherParties, abandonner: abandonnerQuete, caracs,
+      quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor,
       terminer: async issue => {
         if (!confirm(`Terminer la quête : ${issue === 'reussie' ? 'réussie' : 'échouée'} ?\nL’or et l’inventaire de chaque héros seront enregistrés dans son personnage.`)) return;
         const morts = await Heros.terminerQuete(partie, issue);
@@ -294,6 +295,7 @@ async function exporter() {
     parties: await Stockage.listerParties(),
     caracteristiques: await Stockage.lireReglage('caracteristiques') || null,
     personnages: await Stockage.listerPersonnages(),
+    cartesTresor: await Stockage.lireReglage('cartesTresor') || [],
   };
   const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -347,6 +349,7 @@ async function importerFichier(fichier) {
   for (const p of Array.isArray(donnees.personnages) ? donnees.personnages : []) {
     if (p && typeof p.id === 'string' && typeof p.nom === 'string') await Stockage.enregistrerPersonnage(p);
   }
+  if (Array.isArray(donnees.cartesTresor) && donnees.cartesTresor.length) await Stockage.ecrireReglage('cartesTresor', donnees.cartesTresor);
   if (donnees.caracteristiques && typeof donnees.caracteristiques === 'object') {
     await Stockage.ecrireReglage('caracteristiques', donnees.caracteristiques);
   }
@@ -373,8 +376,10 @@ async function afficherAPropos() {
   const installee = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
   const caracs = await lireCaracs();
+  const cartes = await Stockage.lireReglage('cartesTresor') || [];
   vue.innerHTML = `
     ${formulaireCaracs(caracs)}
+    ${formulaireCartes(cartes)}
     <section class="carte">
       <h2>Compagnon de quête ${VERSION_APP}</h2>
       <p>Application personnelle, à usage familial. Elle ne contient aucun texte, aucune illustration
@@ -400,6 +405,7 @@ async function afficherAPropos() {
     </section>`;
 
   brancherCaracs(caracs);
+  brancherCartes(cartes);
 
   $('#btn-maj').addEventListener('click', async () => {
     const etat = $('#etat-maj');
@@ -474,6 +480,56 @@ function brancherCaracs(caracs) {
     const etat = $('#etat-caracs');
     etat.textContent = reste ? `Enregistré. ${reste} valeur(s) à remplir.` : 'Enregistré. Toutes les valeurs sont remplies.';
     etat.className = 'petit ' + (reste ? 'erreur' : 'succes');
+  }));
+}
+
+/* ---------- Cartes trésor (pioche virtuelle, saisie d'après vos cartes) ---------- */
+
+const TYPES_CARTES = [
+  { id: 'or', nom: 'Pièces d’or' }, { id: 'potion', nom: 'Potion' }, { id: 'objet', nom: 'Objet' },
+  { id: 'errant', nom: 'Monstre errant' }, { id: 'danger', nom: 'Danger' }, { id: 'rien', nom: 'Rien' },
+];
+
+function formulaireCartes(cartes) {
+  const total = cartes.reduce((t, c) => t + (c.nombre || 1), 0);
+  return `
+    <section class="carte">
+      <h2>Cartes trésor</h2>
+      <p>La pioche virtuelle utilise ces cartes. Recopiez les vôtres si vous voulez que l’application pioche ;
+         sinon, en jeu, vous pourrez toujours indiquer la vraie carte piochée. Elles restent sur cet iPad.</p>
+      <p class="discret petit">${total} carte(s) dans la pioche. « Valeur » : pièces d’or (or) ou points de Vie perdus (danger).
+        Or, potions et objets sortent de la pioche jusqu’à la quête suivante ; les autres y retournent.</p>
+      ${cartes.length ? `<div class="tableau-defilant"><table class="caracs"><thead><tr><th>Nom</th><th>Type</th><th>Valeur</th><th>Nombre</th><th></th></tr></thead><tbody>
+        ${cartes.map((c, k) => `<tr><td>${echapper(c.nom || '')}${c.texte ? `<br><span class="discret petit">${echapper(c.texte)}</span>` : ''}</td>
+          <td>${TYPES_CARTES.find(t => t.id === c.type)?.nom || c.type}</td><td>${c.valeur ?? ''}</td><td>${c.nombre || 1}</td>
+          <td><button class="icone petit-bouton" data-retirer-carte="${k}" aria-label="Retirer">✕</button></td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+      <form id="form-carte" class="grille-champs">
+        <label class="champ-perso"><span>Nom</span><input id="ct-nom" type="text" maxlength="60" placeholder="ex. Potion de soin" required></label>
+        <label class="champ-perso"><span>Type</span><select id="ct-type" class="choix-classe">${TYPES_CARTES.map(t => `<option value="${t.id}">${t.nom}</option>`).join('')}</select></label>
+        <label class="champ-perso"><span>Valeur</span><input id="ct-valeur" type="number" inputmode="numeric" min="0" max="999"></label>
+        <label class="champ-perso"><span>Nombre</span><input id="ct-nombre" type="number" inputmode="numeric" min="1" max="20" value="1"></label>
+        <label class="champ-perso large"><span>Texte (facultatif)</span><input id="ct-texte" type="text" maxlength="200"></label>
+        <button type="submit">Ajouter la carte</button>
+      </form>
+    </section>`;
+}
+
+function brancherCartes(cartes) {
+  $('#form-carte').addEventListener('submit', async e => {
+    e.preventDefault();
+    const nom = $('#ct-nom').value.trim();
+    if (!nom) return;
+    const v = parseInt($('#ct-valeur').value, 10), n = parseInt($('#ct-nombre').value, 10);
+    cartes.push({ nom: nom.slice(0, 60), type: $('#ct-type').value, valeur: Number.isFinite(v) ? v : null,
+      nombre: Number.isFinite(n) ? Math.max(1, Math.min(20, n)) : 1, texte: $('#ct-texte').value.trim().slice(0, 200) });
+    await Stockage.ecrireReglage('cartesTresor', cartes);
+    afficherAPropos();
+  });
+  vue.querySelectorAll('[data-retirer-carte]').forEach(b => b.addEventListener('click', async () => {
+    cartes.splice(+b.dataset.retirerCarte, 1);
+    await Stockage.ecrireReglage('cartesTresor', cartes);
+    afficherAPropos();
   }));
 }
 
