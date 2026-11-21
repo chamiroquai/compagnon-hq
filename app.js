@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.3.1';
+const VERSION_APP = '0.4.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -128,20 +128,33 @@ async function afficherPartie(id) {
     partie.modifieeLe = new Date().toISOString();
     await Stockage.enregistrerPartie(partie);
   };
-  if (partie.quete) {
-    VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie);
-    $('#btn-abandon').addEventListener('click', async () => {
-      if (!confirm('Abandonner la quête en cours ? Les héros, portes et cases dévoilées seront effacés (les notes restent).')) return;
-      delete partie.quete; delete partie.etat;
+  if (partie.quete && !partie.etat?.ordre) {
+    // Avant le début : fixer l'ordre de jeu des héros. La quête démarre ensuite.
+    choisirOrdre($('#zone-plateau'), partie, async ordre => {
+      partie.etat.ordre = ordre;
+      partie.etat.tour = { numero: 1, index: 0 }; // tour n° 1, premier héros de l'ordre
       await enregistrerPartie();
       afficherPartie(id);
     });
+    brancherAbandon();
+  } else if (partie.quete) {
+    VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie);
+    brancherAbandon();
   } else {
     $('#btn-demo').addEventListener('click', async () => {
       // Copie de la quête dans la partie : la partie reste lisible même si la quête change plus tard.
       partie.quete = JSON.parse(JSON.stringify(QUETE_DEMO));
       partie.reglages = { porteeCouloir: Plateau.PORTEE_DEFAUT, ...(partie.reglages || {}) };
       partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages));
+      await enregistrerPartie();
+      afficherPartie(id);
+    });
+  }
+
+  function brancherAbandon() {
+    $('#btn-abandon').addEventListener('click', async () => {
+      if (!confirm('Abandonner la quête en cours ? Les héros, portes et cases dévoilées seront effacés (les notes restent).')) return;
+      delete partie.quete; delete partie.etat;
       await enregistrerPartie();
       afficherPartie(id);
     });
@@ -174,6 +187,47 @@ async function afficherPartie(id) {
     await Stockage.supprimerPartie(id);
     afficherParties();
   });
+}
+
+/* ---------- Ordre de jeu (avant le début de la quête) ---------- */
+
+// Affiche la liste des héros, réordonnable avec ↑ ↓ ; « Tirer au sort » mélange ;
+// « Commencer la quête » valide. L'ordre ne change plus ensuite.
+function choisirOrdre(conteneur, partie, valider) {
+  let ordre = partie.etat.heros.map(h => h.id);
+  const nom = hid => partie.etat.heros.find(h => h.id === hid).nom;
+
+  function dessiner() {
+    conteneur.innerHTML = `
+      <p>Avant de commencer, fixez l’ordre dans lequel les héros joueront.
+         Il restera le même pendant toute la quête ; Zargon joue après le dernier héros.</p>
+      <ol class="liste-ordre">
+        ${ordre.map((hid, n) => `
+          <li>
+            <span class="pastille h-${hid}"></span>
+            <span class="nom-ordre">${n + 1}. ${echapper(nom(hid))}</span>
+            <button data-monter="${n}" aria-label="Monter ${echapper(nom(hid))}" ${n === 0 ? 'disabled' : ''}>↑</button>
+            <button data-descendre="${n}" aria-label="Descendre ${echapper(nom(hid))}" ${n === ordre.length - 1 ? 'disabled' : ''}>↓</button>
+          </li>`).join('')}
+      </ol>
+      <div class="ligne">
+        <button id="btn-hasard">Tirer au sort</button>
+        <button id="btn-commencer" class="principal">Commencer la quête</button>
+      </div>`;
+    const echanger = (a, b) => { [ordre[a], ordre[b]] = [ordre[b], ordre[a]]; dessiner(); };
+    conteneur.querySelectorAll('[data-monter]').forEach(b => b.addEventListener('click', () => echanger(+b.dataset.monter, +b.dataset.monter - 1)));
+    conteneur.querySelectorAll('[data-descendre]').forEach(b => b.addEventListener('click', () => echanger(+b.dataset.descendre, +b.dataset.descendre + 1)));
+    conteneur.querySelector('#btn-hasard').addEventListener('click', () => {
+      // Mélange de Fisher-Yates : chaque ordre a la même chance.
+      for (let i = ordre.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [ordre[i], ordre[j]] = [ordre[j], ordre[i]];
+      }
+      dessiner();
+    });
+    conteneur.querySelector('#btn-commencer').addEventListener('click', () => valider([...ordre]));
+  }
+  dessiner();
 }
 
 /* ---------- Vue : sauvegardes ---------- */

@@ -41,7 +41,12 @@ const VuePlateau = (() => {
     let zoom = Number(localStorage.getItem('zoomPlateau')) || 1;
     const historique = [];       // états précédents, pour « Annuler » (60 au plus)
 
+    const nomHeros = hid => etat.heros.find(h => h.id === hid)?.nom ?? hid;
     conteneur.innerHTML = `
+      <ol class="ordre-jeu" aria-label="Ordre de jeu">
+        ${(etat.ordre || []).map(hid => `<li><span class="pastille h-${hid}"></span>${nomHeros(hid)}</li>`).join('')}
+        <li class="zargon">Zargon</li>
+      </ol>
       <div class="barre-plateau">
         <button id="pl-annuler" disabled>↶ Annuler</button>
         <button id="pl-mj" aria-pressed="false">Vue MJ</button>
