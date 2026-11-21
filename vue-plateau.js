@@ -10,18 +10,7 @@ const VuePlateau = (() => {
   const T = 40; // taille d'une case en unités du dessin
   const NS = 'http://www.w3.org/2000/svg';
 
-  const MONSTRES = {
-    gobelin: { nom: 'Gobelin', court: 'Go' },
-    orque: { nom: 'Orque', court: 'Or' },
-    abomination: { nom: 'Abomination', court: 'Ab' },
-    guerrierEffroi: { nom: 'Guerrier de l’Effroi', court: 'GE' },
-    gargouille: { nom: 'Gargouille', court: 'Ga' },
-    squelette: { nom: 'Squelette', court: 'Sq' },
-    zombie: { nom: 'Zombie', court: 'Zo' },
-    momie: { nom: 'Momie', court: 'Mo' },
-    sorcierEffroi: { nom: 'Sorcier de l’Effroi', court: 'SE' },
-  };
-  const infoMonstre = type => MONSTRES[type] || { nom: type, court: String(type).slice(0, 2) };
+  const infoMonstre = type => Regles.infoMonstre(type);
 
   // Protège un texte avant de l'insérer dans la page.
   const echapperTexte = t => String(t ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -43,6 +32,25 @@ const VuePlateau = (() => {
     const { L, H } = g;
     let etat = partie.etat;
     if (!etat.tour) etat.tour = { numero: 1, index: 0 }; // parties commencées avant la v0.5.0
+    const caracs = options.caracs || Regles.caracsVides();
+    const carac = (famille, type, champ) => Regles.valeur(caracs, famille, type, champ);
+    // Points de Corps et d'Esprit de départ, d'après les caractéristiques saisies.
+    // (Seulement s'ils n'existent pas encore : une quête en cours garde ses valeurs.)
+    let initialise = false;
+    for (const h of etat.heros) {
+      if (h.corps === undefined && carac('heros', h.id, 'corps') !== null) {
+        h.corpsMax = h.corps = carac('heros', h.id, 'corps');
+        h.espritMax = h.esprit = carac('heros', h.id, 'esprit');
+        initialise = true;
+      }
+    }
+    for (const m of etat.monstres) {
+      if (m.corps === undefined && carac('monstres', m.type, 'corps') !== null) {
+        m.corpsMax = m.corps = carac('monstres', m.type, 'corps');
+        initialise = true;
+      }
+    }
+    if (initialise) { partie.etat = etat; enregistrer(); }
     let selection = null;        // id du héros sélectionné
     let vueMJ = false;
     let zoom = Number(localStorage.getItem('zoomJeu')) || 1; // 1 = plateau ajusté à l'écran
@@ -71,6 +79,7 @@ const VuePlateau = (() => {
           <span class="espace"></span>
           <button id="pl-menu" class="icone" aria-label="Menu">☰</button>
         </nav>
+        <div id="pl-fiche" class="feuille fiche" hidden></div>
         <div id="pl-feuille" class="feuille" hidden>
           <div class="feuille-entete">
             <h2>${echapperTexte(quete.titre)}</h2>
@@ -232,7 +241,8 @@ const VuePlateau = (() => {
       // 6. Monstres (seulement sur les cases dévoilées)
       for (const m of etat.monstres) {
         if (!visible(Plateau.idx(L, m.x, m.y))) continue;
-        const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') }, svg);
+        const visableCible = ciblage && ciblesAttaque().some(c => c.id === m.id);
+        const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : ''), 'data-monstre': m.id }, svg);
         el('rect', { x: m.x * T + 5, y: m.y * T + 5, width: T - 10, height: T - 10, rx: 5 }, gr);
         const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
         t.textContent = infoMonstre(m.type).court;
@@ -253,7 +263,7 @@ const VuePlateau = (() => {
       // 8. Héros
       for (const h of etat.heros) {
         if (h.x == null) continue;
-        const cls = 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '');
+        const cls = 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '') + (h.corps === 0 ? ' a-terre' : '');
         const gr = el('g', { class: cls, 'data-heros': h.id }, svg);
         // Héros actif : anneau blanc autour du pion, visible quelle que soit sa couleur.
         if (cls.includes(' actif')) el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 1, class: 'anneau' }, gr);
@@ -317,7 +327,13 @@ const VuePlateau = (() => {
         return selection ? poserHeros(c) : toucherCaseMJ(c);
       }
 
-      // Vue des joueurs : pendant un déplacement, toucher une case fait avancer le héros actif.
+      // Vue des joueurs : en mode attaque, toucher un monstre le choisit comme cible.
+      const monstreTouche = evt.target.closest('[data-monstre]');
+      if (ciblage) {
+        if (monstreTouche) return choisirCible(monstreTouche.dataset.monstre);
+        return msg('Touchez un monstre entouré de rouge, ou « Retour ».');
+      }
+      // Pendant un déplacement, toucher une case fait avancer le héros actif.
       if (c && etat.tour?.deplacement) return avancer(c);
       if (heros) {
         const h = etat.heros.find(k => k.id === heros.dataset.heros);
@@ -325,7 +341,7 @@ const VuePlateau = (() => {
       }
       if (!c) return;
       const m = etat.monstres.find(k => k.x === c.x && k.y === c.y);
-      if (m && etat.revele.includes(Plateau.idx(L, c.x, c.y))) msg(infoMonstre(m.type).nom + '.');
+      if (m && etat.revele.includes(Plateau.idx(L, c.x, c.y))) msg(`${infoMonstre(m.type).nom} — Corps ${m.corps ?? '?'}${m.corpsMax ? '/' + m.corpsMax : ''}.`);
     });
 
     // Vue MJ : pose un héros n'importe où (sauf roche, meuble ou case occupée).
@@ -357,17 +373,33 @@ const VuePlateau = (() => {
       const ordre = etat.ordre || [];
       const actif = herosActif();
       conteneur.querySelector('#pl-ordre').innerHTML =
-        ordre.map((hid, n) => `<li class="${n === t.index ? 'en-cours' : ''}"><span class="pastille h-${hid}"></span>${nomHeros(hid)}</li>`).join('')
-        + `<li class="zargon ${t.index >= ordre.length ? 'en-cours' : ''}">Zargon</li>`;
+        ordre.map((hid, n) => {
+          const h = etat.heros.find(k => k.id === hid);
+          return `<li class="${n === t.index ? 'en-cours' : ''}${h.corps === 0 ? ' a-terre' : ''}"><button class="puce-heros" data-fiche="${hid}" aria-label="Fiche : ${h.nom}">
+            <span class="pastille h-${hid}"></span>${h.court}<span class="pc">♥${h.corps ?? '?'}</span></button></li>`;
+        }).join('')
+        + `<li class="zargon ${t.index >= ordre.length ? 'en-cours' : ''}" title="Zargon">Z</li>`;
 
+      conteneur.querySelectorAll('[data-fiche]').forEach(b => b.addEventListener('click', () => ouvrirFiche(b.dataset.fiche)));
       const p = conteneur.querySelector('#pl-tour');
-      conteneur.querySelector('#pl-haut').classList.toggle('saisie', saisieDes && !vueMJ);
+      conteneur.querySelector('#pl-haut').classList.toggle('saisie', (saisieDes || ciblage || cible) && !vueMJ);
       if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
       let html = `<span class="titre-tour">T${t.numero} · `;
       if (!actif) {
         html += `<strong>Zargon</strong></span>
           <span class="discret petit">(monstres : étape 5)</span>
           <button id="tr-fin-zargon" class="principal">Fin du tour de Zargon</button>`;
+      } else if (cible) {
+        const m = etat.monstres.find(k => k.id === cible);
+        const n = carac('heros', actif.id, 'attaque');
+        html += `<strong>${actif.nom}</strong> → ${infoMonstre(m.type).nom}</span>
+          <span>Lancez ${n ?? '?'} dé${n > 1 ? 's' : ''} : crânes obtenus ?</span>
+          <div class="des">${Array.from({ length: (n ?? 6) + 1 }, (_, k) => `<button data-cranes="${k}">${k}</button>`).join('')}</div>
+          <button id="tr-retour-attaque">Retour</button>`;
+      } else if (ciblage) {
+        html += `<strong>${actif.nom}</strong></span>
+          <span>Touchez le monstre à attaquer.</span>
+          <button id="tr-retour-attaque">Retour</button>`;
       } else if (saisieDes) {
         html += `<strong>${actif.nom}</strong></span>
           <span>Total des dés :</span>
@@ -375,12 +407,14 @@ const VuePlateau = (() => {
           <button id="tr-annuler-des">Retour</button>`;
       } else if (t.deplacement) {
         html += `<strong>${actif.nom}</strong></span>
-          <span class="compteur">${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''} restante${t.deplacement.restant > 1 ? 's' : ''}</span>
+          <span class="compteur" title="cases restantes">${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''}</span>
           <button id="tr-fin-depl">Terminer</button>
+          <button id="tr-attaquer">Attaquer</button>
           <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       } else {
         html += `<strong>${actif.nom}</strong></span>
           <button id="tr-depl">${t.aBouge ? 'Se déplacer encore' : 'Se déplacer'}</button>
+          <button id="tr-attaquer">Attaquer</button>
           <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       }
       p.innerHTML = html;
@@ -391,12 +425,15 @@ const VuePlateau = (() => {
       sur('#tr-fin-depl', terminerDeplacement);
       sur('#tr-fin-tour', finDuTour);
       sur('#tr-fin-zargon', finTourZargon);
+      sur('#tr-attaquer', commencerAttaque);
+      sur('#tr-retour-attaque', () => { ciblage = false; cible = null; msg(''); dessiner(); });
+      p.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
     }
 
     let saisieDes = false; // le panneau affiche les boutons 2 à 12
 
     function commencerDeplacement() {
-      saisieDes = true;
+      saisieDes = true; ciblage = false; cible = null;
       const actif = herosActif();
       // Écart n° 1 : un seul déplacement par tour. On avertit, on ne bloque pas.
       msg(etat.tour.aBouge
@@ -442,7 +479,7 @@ const VuePlateau = (() => {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
-      saisieDes = false;
+      saisieDes = false; ciblage = false; cible = null;
       modifier(e => { e.tour = { numero: e.tour.numero, index: e.tour.index + 1 }; });
       const suivant = herosActif();
       msg(suivant ? `À ${suivant.nom} de jouer.` : 'Au tour de Zargon.');
@@ -451,6 +488,106 @@ const VuePlateau = (() => {
     function finTourZargon() {
       modifier(e => { e.tour = { numero: e.tour.numero + 1, index: 0 }; });
       msg(`Tour ${etat.tour.numero} : à ${herosActif()?.nom ?? '?'} de jouer.`);
+    }
+
+    /* ---------- Attaque d'un héros ---------- */
+
+    let ciblage = false; // le joueur doit toucher un monstre
+    let cible = null;    // monstre choisi : on attend le nombre de crânes
+
+    // Monstres que le héros actif peut attaquer : visibles, sur une case voisine
+    // (pas de diagonale), sans mur ni porte fermée entre les deux.
+    function ciblesAttaque() {
+      const h = herosActif();
+      if (!h) return [];
+      const vu = new Set(etat.revele);
+      return etat.monstres.filter(m =>
+        vu.has(Plateau.idx(L, m.x, m.y)) &&
+        Math.abs(m.x - h.x) + Math.abs(m.y - h.y) === 1 &&
+        Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, m.x, m.y)));
+    }
+
+    function commencerAttaque() {
+      const h = herosActif();
+      if (!ciblesAttaque().length) return msg('Aucun monstre à portée : il faut un monstre visible sur une case voisine (sans diagonale).');
+      ciblage = true; saisieDes = false;
+      msg((etat.tour.actions || 0) >= 1
+        ? `⚠ ${h.nom} a déjà fait une action ce tour-ci (règle : une seule action par tour). Vous pouvez continuer.`
+        : 'Touchez le monstre à attaquer (entouré de rouge).');
+      dessiner();
+    }
+
+    function choisirCible(id) {
+      if (!ciblesAttaque().some(m => m.id === id)) return msg('Ce monstre n’est pas à portée.');
+      const m = etat.monstres.find(k => k.id === id);
+      if (carac('monstres', m.type, 'defense') === null)
+        return msg(`Défense des ${infoMonstre(m.type).nom}s inconnue : remplissez-la dans Réglages › Caractéristiques.`);
+      ciblage = false; cible = id;
+      const n = carac('heros', herosActif().id, 'attaque');
+      msg(`Lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat, puis touchez le nombre de crânes.`);
+      dessiner();
+    }
+
+    // Les crânes du héros moins les boucliers noirs du monstre = points de Corps perdus.
+    function resoudreAttaque(cranes) {
+      const h = herosActif();
+      const m = etat.monstres.find(k => k.id === cible);
+      const nom = infoMonstre(m.type).nom;
+      const nbDef = carac('monstres', m.type, 'defense');
+      const tirage = Regles.lancer(nbDef);
+      const noirs = Regles.compter(tirage, 'noir');
+      const degats = Math.max(0, cranes - noirs);
+      cible = null;
+      let fin = '';
+      modifier(e => {
+        if (e.tour.deplacement) e.tour.deplacement = null; // une action termine le déplacement en cours
+        e.tour.actions = (e.tour.actions || 0) + 1;
+        const k = e.monstres.find(z => z.id === m.id);
+        if (k.corps == null) k.corps = 1;
+        k.corps = Math.max(0, k.corps - degats);
+        if (k.corps === 0) { e.monstres = e.monstres.filter(z => z.id !== m.id); fin = ` ${nom} est vaincu !`; }
+        else fin = degats ? ` ${nom} : ${k.corps} point${k.corps > 1 ? 's' : ''} de Corps restant${k.corps > 1 ? 's' : ''}.` : '';
+      });
+      msg(`${h.nom} : ${cranes} 💀. Défense ${nom} : ${Regles.afficher(tirage) || '(aucun dé)'} → ${noirs} bouclier${noirs > 1 ? 's' : ''} noir${noirs > 1 ? 's' : ''}. `
+        + (degats ? `${degats} blessure${degats > 1 ? 's' : ''}.` : 'Aucune blessure.') + fin);
+    }
+
+    /* ---------- Fiche d'un héros ---------- */
+
+    function ouvrirFiche(hid) {
+      const h = etat.heros.find(k => k.id === hid);
+      const fiche = conteneur.querySelector('#pl-fiche');
+      const manque = Regles.manquantes(caracs, 'heros', hid);
+      const ligne = (nom, champ) => `<tr><th>${nom}</th><td>${carac('heros', hid, champ) ?? '?'}</td></tr>`;
+      const compteur = (nom, champ) => `
+        <div class="compteur-fiche">
+          <span>${nom}</span>
+          <button data-modif="${champ}" data-delta="-1" class="icone" aria-label="${nom} moins 1">−</button>
+          <strong>${h[champ] ?? '?'}${h[champ + 'Max'] != null ? ' / ' + h[champ + 'Max'] : ''}</strong>
+          <button data-modif="${champ}" data-delta="1" class="icone" aria-label="${nom} plus 1">+</button>
+        </div>`;
+      fiche.innerHTML = `
+        <div class="feuille-entete">
+          <h2><span class="pastille h-${hid}"></span> ${h.nom}</h2>
+          <button class="icone" data-fermer aria-label="Fermer la fiche">✕</button>
+        </div>
+        ${manque.length ? `<p class="erreur petit">À remplir dans Réglages › Caractéristiques : ${manque.join(', ')}.</p>` : ''}
+        ${compteur('Corps', 'corps')}
+        ${compteur('Esprit', 'esprit')}
+        ${h.corps === 0 ? '<p class="erreur">⚠ 0 point de Corps : le héros meurt, sauf potion ou sort de soin.</p>' : ''}
+        <table class="caracs petite"><tbody>${ligne('Dés d’attaque', 'attaque')}${ligne('Dés de défense', 'defense')}</tbody></table>
+        <p class="discret petit">Les boutons − et + servent aux blessures, soins et corrections. Ils s’annulent avec ↶.</p>`;
+      fiche.hidden = false;
+      fiche.querySelector('[data-fermer]').addEventListener('click', () => { fiche.hidden = true; });
+      fiche.querySelectorAll('[data-modif]').forEach(b => b.addEventListener('click', () => {
+        const champ = b.dataset.modif, delta = +b.dataset.delta;
+        modifier(e => {
+          const k = e.heros.find(z => z.id === hid);
+          const max = k[champ + 'Max'] ?? 99;
+          k[champ] = Math.max(0, Math.min(max, (k[champ] ?? 0) + delta));
+        });
+        ouvrirFiche(hid);
+      }));
     }
 
     function toucherPorte(id) {

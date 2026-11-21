@@ -273,3 +273,34 @@ svg.mj .brouillard rect { stroke: none; }
   .jeu-haut .panneau-tour { flex-wrap: wrap; white-space: normal; }
   .jeu-haut .panneau-tour .des { flex-wrap: wrap; }
 }
+
+/* ---------- Étape 5a : fiches, points de Corps, attaque ---------- */
+.ordre-jeu li { padding: 0; }
+.ordre-jeu li.zargon { padding: 3px 10px; }
+.puce-heros {
+  min-height: 38px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent;
+  display: flex; align-items: center; gap: 6px; font-size: inherit; color: inherit; font-weight: inherit; white-space: nowrap;
+}
+.puce-heros .pc { color: #f0a89a; font-weight: 700; }
+.ordre-jeu li.a-terre { opacity: 0.5; text-decoration: line-through; }
+.heros.a-terre { opacity: 0.45; }
+.monstre.cible rect { stroke: #ff5a4a; stroke-width: 4; }
+
+.fiche { width: min(340px, 85%); }
+.fiche h2 { display: flex; align-items: center; gap: 8px; }
+.compteur-fiche { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+.compteur-fiche span { flex: 1; font-weight: 600; }
+.compteur-fiche strong { min-width: 64px; text-align: center; font-size: 1.3rem; color: var(--or); }
+
+.tableau-defilant { overflow-x: auto; margin-bottom: 12px; }
+table.caracs { border-collapse: collapse; font-size: 0.9rem; }
+table.caracs th, table.caracs td { padding: 4px 6px; border-bottom: 1px solid var(--bord); text-align: left; }
+table.caracs thead th { font-weight: 600; color: var(--discret); vertical-align: bottom; max-width: 90px; }
+table.caracs input { width: 64px; min-height: 40px; padding: 4px 8px; font: inherit; color: var(--texte); background: #1f1a14; border: 1px solid var(--bord); border-radius: 8px; }
+table.caracs.petite { margin-top: 8px; }
+.carte h3 { margin: 14px 0 8px; font-size: 1rem; color: var(--or); }
+.jeu-haut .ordre-jeu { gap: 4px; }
+.jeu-haut .puce-heros { padding: 0 7px; gap: 4px; min-height: 36px; }
+.jeu-haut .pastille { width: 14px; height: 14px; }
+.jeu-haut .panneau-tour { gap: 6px; }
+.jeu-haut .panneau-tour button { padding: 0 12px; }

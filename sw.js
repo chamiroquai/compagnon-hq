@@ -2,8 +2,8 @@
    fonctionne hors ligne. Les parties ne passent jamais par ici : elles sont
    dans la base locale (IndexedDB) de l'iPad.
    À CHAQUE NOUVELLE VERSION : changer le numéro dans CACHE ci-dessous. */
-const CACHE = 'compagnon-hq-v0.6.1';
-const FICHIERS = ['./', './index.html', './styles.css', './stockage.js', './quete-demo.js', './plateau.js', './vue-plateau.js', './app.js', './manifest.webmanifest'];
+const CACHE = 'compagnon-hq-v0.7.0';
+const FICHIERS = ['./', './index.html', './styles.css', './stockage.js', './regles.js', './quete-demo.js', './plateau.js', './vue-plateau.js', './app.js', './manifest.webmanifest'];
 // Icônes facultatives : leur absence ne doit pas empêcher le mode hors ligne.
 const ICONES = ['./icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 

@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.6.1';
+const VERSION_APP = '0.7.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -115,7 +115,11 @@ async function afficherPartie(id) {
   if (partie.quete && partie.etat?.ordre) {
     document.body.classList.add('mode-jeu');
     vue.innerHTML = '<div id="zone-plateau" class="zone-jeu"></div>';
-    VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, { quitter: afficherParties, abandonner: abandonnerQuete });
+    const caracs = await lireCaracs();
+    VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, {
+      quitter: afficherParties, abandonner: abandonnerQuete, caracs,
+      reglages: () => afficherAPropos(),
+    });
     return;
   }
   document.body.classList.remove('mode-jeu');
@@ -275,6 +279,7 @@ async function exporter() {
     versionApp: VERSION_APP,
     exporteeLe: maintenant,
     parties: await Stockage.listerParties(),
+    caracteristiques: await Stockage.lireReglage('caracteristiques') || null,
   };
   const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -317,13 +322,17 @@ async function importerFichier(fichier) {
   const remplacees = donnees.parties.filter(p => existantes.has(p.id));
   const message = `Ce fichier contient ${donnees.parties.length} partie(s), sauvegardée(s) le ${dateLisible(donnees.exporteeLe)}.`
     + (remplacees.length ? `\n${remplacees.length} existe(nt) déjà sur cet iPad et sera(ont) remplacée(s) :\n– ${remplacees.map(p => p.nom).join('\n– ')}` : '')
+    + (donnees.caracteristiques ? '\nLes caractéristiques (héros et monstres) du fichier remplaceront celles de cet iPad.' : '')
     + '\n\nContinuer ?';
   if (!confirm(message)) return dire('Restauration annulée.');
 
   for (const p of donnees.parties) {
     await Stockage.enregistrerPartie({ notes: '', creeeLe: donnees.exporteeLe, modifieeLe: donnees.exporteeLe, ...p });
   }
-  dire(`${donnees.parties.length} partie(s) restaurée(s).`, 'succes');
+  if (donnees.caracteristiques && typeof donnees.caracteristiques === 'object') {
+    await Stockage.ecrireReglage('caracteristiques', donnees.caracteristiques);
+  }
+  dire(`${donnees.parties.length} partie(s) restaurée(s)${donnees.caracteristiques ? ', caractéristiques comprises' : ''}.`, 'succes');
 }
 
 $('#fichier-import').addEventListener('change', async e => {
@@ -338,14 +347,16 @@ async function afficherAPropos() {
   document.body.classList.remove('mode-jeu');
   partieOuverte = null;
   choisirOnglet('apropos');
-  $('#titre-vue').textContent = 'À propos';
+  $('#titre-vue').textContent = 'Réglages';
   $('#btn-retour').hidden = true;
 
   let persistant = null;
   try { persistant = navigator.storage?.persisted ? await navigator.storage.persisted() : null; } catch { }
   const installee = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
+  const caracs = await lireCaracs();
   vue.innerHTML = `
+    ${formulaireCaracs(caracs)}
     <section class="carte">
       <h2>Compagnon de quête ${VERSION_APP}</h2>
       <p>Application personnelle, à usage familial. Elle ne contient aucun texte, aucune illustration
@@ -370,6 +381,8 @@ async function afficherAPropos() {
       <p id="etat-maj" class="discret petit"></p>
     </section>`;
 
+  brancherCaracs(caracs);
+
   $('#btn-maj').addEventListener('click', async () => {
     const etat = $('#etat-maj');
     if (!('serviceWorker' in navigator)) return (etat.textContent = 'Mises à jour automatiques indisponibles ici.');
@@ -382,6 +395,66 @@ async function afficherAPropos() {
       etat.textContent = 'Impossible de vérifier (pas de connexion ?).';
     }
   });
+}
+
+/* ---------- Caractéristiques (saisies d'après vos cartes) ---------- */
+
+async function lireCaracs() {
+  const c = await Stockage.lireReglage('caracteristiques');
+  const vide = Regles.caracsVides();
+  // Complète avec les types éventuellement ajoutés dans une version plus récente.
+  return { heros: { ...vide.heros, ...(c?.heros || {}) }, monstres: { ...vide.monstres, ...(c?.monstres || {}) } };
+}
+
+function tableCaracs(caracs, famille, types, champs) {
+  return `
+    <div class="tableau-defilant">
+      <table class="caracs">
+        <thead><tr><th></th>${champs.map(c => `<th>${c.nom}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${types.map(t => `<tr><th>${echapper(t.nom)}</th>${champs.map(c => {
+            const v = Regles.valeur(caracs, famille, t.id, c.id);
+            return `<td><input type="number" inputmode="numeric" min="0" max="20" step="1"
+                      data-famille="${famille}" data-type="${t.id}" data-champ="${c.id}"
+                      value="${v ?? ''}" aria-label="${echapper(t.nom)} — ${c.nom}"></td>`;
+          }).join('')}</tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function formulaireCaracs(caracs) {
+  const nbManquantes = [...Regles.TYPES_HEROS.map(t => Regles.manquantes(caracs, 'heros', t.id).length),
+    ...Regles.TYPES_MONSTRES.map(t => Regles.manquantes(caracs, 'monstres', t.id).length)].reduce((a, b) => a + b, 0);
+  return `
+    <section class="carte">
+      <h2>Caractéristiques</h2>
+      <p>Recopiez ici les valeurs de vos cartes de héros et du tableau des monstres (paravent de Zargon).
+         Elles restent sur cet iPad et sont incluses dans vos fichiers de sauvegarde.</p>
+      <p id="etat-caracs" class="petit ${nbManquantes ? 'erreur' : 'succes'}">${nbManquantes ? `${nbManquantes} valeur(s) à remplir.` : 'Toutes les valeurs sont remplies.'}</p>
+      <h3>Héros</h3>
+      ${tableCaracs(caracs, 'heros', Regles.TYPES_HEROS, Regles.CHAMPS_HEROS)}
+      <h3>Monstres</h3>
+      ${tableCaracs(caracs, 'monstres', Regles.TYPES_MONSTRES, Regles.CHAMPS_MONSTRES)}
+      <p class="discret petit">Les nouvelles valeurs s’appliquent aux quêtes commencées ensuite.
+         Pour une quête en cours, corrigez les points de Corps depuis la fiche du héros.</p>
+    </section>`;
+}
+
+function brancherCaracs(caracs) {
+  vue.querySelectorAll('input[data-famille]').forEach(inp => inp.addEventListener('change', async () => {
+    const { famille, type, champ } = inp.dataset;
+    const n = inp.value === '' ? null : Math.max(0, Math.min(20, Math.round(Number(inp.value))));
+    caracs[famille][type] = { ...(caracs[famille][type] || {}) };
+    if (n === null || !Number.isFinite(n)) delete caracs[famille][type][champ];
+    else { caracs[famille][type][champ] = n; inp.value = n; }
+    await Stockage.ecrireReglage('caracteristiques', caracs);
+    const reste = [...Regles.TYPES_HEROS.map(t => Regles.manquantes(caracs, 'heros', t.id).length),
+      ...Regles.TYPES_MONSTRES.map(t => Regles.manquantes(caracs, 'monstres', t.id).length)].reduce((a, b) => a + b, 0);
+    const etat = $('#etat-caracs');
+    etat.textContent = reste ? `Enregistré. ${reste} valeur(s) à remplir.` : 'Enregistré. Toutes les valeurs sont remplies.';
+    etat.className = 'petit ' + (reste ? 'erreur' : 'succes');
+  }));
 }
 
 /* ---------- Rappel de sauvegarde ---------- */
