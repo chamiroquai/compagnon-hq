@@ -62,7 +62,9 @@ const Plateau = (() => {
   // contournent ce coin est libre : une ligne qui ne fait que toucher un coin
   // de mur n'est pas bloquée (règle officielle, écart n° 9).
   // Les figurines ne bloquent pas ici : cette fonction sert au dévoilement du plan.
-  function ligneDeVue(g, etat, ax, ay, bx, by) {
+  // obstacles (facultatif) : ensemble de numéros de cases occupées par des figurines,
+  // qui bloquent la ligne (sauf la case d'arrivée) — pour viser avec un sort.
+  function ligneDeVue(g, etat, ax, ay, bx, by, obstacles = null) {
     let x = ax, y = ay;
     const dx = bx - ax, dy = by - ay;
     const sx = Math.sign(dx), sy = Math.sign(dy);
@@ -80,12 +82,15 @@ const Plateau = (() => {
         const chemin2 = ouvert(g, etat, avant, c2) && ouvert(g, etat, c2, d);
         if (!chemin1 && !chemin2) return false;
         x += sx; y += sy; prochainX += pasX; prochainY += pasY;
+        if (obstacles && obstacles.has(ici()) && (x !== bx || y !== by)) return false;
       } else if (prochainX < prochainY) {
         if (!ouvert(g, etat, avant, idx(g.L, x + sx, y))) return false;
         x += sx; prochainX += pasX;
+        if (obstacles && obstacles.has(ici()) && (x !== bx || y !== by)) return false;
       } else {
         if (!ouvert(g, etat, avant, idx(g.L, x, y + sy))) return false;
         y += sy; prochainY += pasY;
+        if (obstacles && obstacles.has(ici()) && (x !== bx || y !== by)) return false;
       }
     }
     return true;

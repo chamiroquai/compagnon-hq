@@ -197,6 +197,22 @@ const Ambiance = (() => {
       '{heros} soulève le couvercle… trop vite.',
       'Un nuage âcre s’échappe quand {heros} touche le meuble !',
     ],
+    // Sorts
+    sort: [
+      '{heros} trace un signe dans l’air ; les runes s’illuminent.',
+      'Les mots anciens franchissent les lèvres de {heros}. L’air vibre.',
+      '{heros} ferme les yeux et appelle les forces de l’élément.',
+      'Une lueur naît entre les mains de {heros}…',
+      'Le grimoire frémit. {heros} prononce la dernière syllabe.',
+    ],
+    reveil: [
+      '{monstre} ouvre un œil, puis l’autre. Il est réveillé !',
+      '{monstre} s’ébroue et se redresse, l’air mauvais.',
+    ],
+    dort: [
+      '{monstre} ronfle comme un soufflet de forge.',
+      '{monstre} dort profondément. Pour l’instant.',
+    ],
     // Un monstre est vaincu (en plus des messages propres à chaque type, plus bas)
     mort: [
       '{monstre} s’effondre dans un dernier râle.',

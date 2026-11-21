@@ -63,7 +63,8 @@ const VuePlateau = (() => {
     const caracBrute = (h, champ) => (Number.isFinite(h?.[champ]) ? h[champ] : carac('heros', h.classe || h.id, champ));
     // Dans une fosse : un dé de combat de moins en attaque et en défense (minimum 1).
     const penaliteFosse = (f, champ, n) => (n !== null && (champ === 'attaque' || champ === 'defense') && Plateau.fosseEn(etat, f.x, f.y) ? Math.max(1, n - 1) : n);
-    const caracHeros = (h, champ) => penaliteFosse(h, champ, caracBrute(h, champ));
+    const bonusSorts = (h, champ, n) => (n === null ? n : n + (champ === 'attaque' && h.courage ? 2 : 0) + (champ === 'defense' && h.peauRoc ? 2 : 0));
+    const caracHeros = (h, champ) => bonusSorts(h, champ, penaliteFosse(h, champ, caracBrute(h, champ)));
     const caracMonstre = (m, champ) => penaliteFosse(m, champ, Regles.valeurMonstre(caracs, m, champ));
     // Points de Vie (champ « corps ») et d'Esprit de départ, d'après les caractéristiques saisies.
     // (Seulement s'ils n'existent pas encore : une quête en cours garde ses valeurs.)
@@ -205,6 +206,8 @@ const VuePlateau = (() => {
       historique.push(avant);
       if (historique.length > 60) historique.shift();
       Plateau.devoiler(g, etat, Plateau.porteeDe(partie.reglages));
+      // Courage prend fin quand plus aucun monstre n'est en vue.
+      if (!etat.monstres.some(m => etat.revele.includes(Plateau.idx(L, m.x, m.y)))) etat.heros.forEach(h => { delete h.courage; });
       partie.etat = etat;
       enregistrer();
       dessiner();
@@ -330,7 +333,7 @@ const VuePlateau = (() => {
 
       // 6 bis. Tour de Zargon : trajet prévu du monstre en cours (cases visibles seulement)
       const plan = etat.zargon?.plan;
-      if (plan && !plan.erreur) {
+      if (plan && !plan.erreur && plan.chemin) {
         const gz = el('g', { class: 'trajet' }, svg);
         plan.chemin.forEach(([x, y], k) => {
           if (!visible(Plateau.idx(L, x, y))) return;
@@ -548,14 +551,26 @@ const VuePlateau = (() => {
 
     function choisirTotal(n) {
       fenetreActions = null;
-      modifier(e => { e.tour.deplacement = { total: n, restant: n }; e.tour.aBouge = true; });
+      const hid = herosActif().id;
+      modifier(e => {
+        const k = e.heros.find(z => z.id === hid);
+        // Sorts « au prochain déplacement » : ils s'appliquent à ce déplacement, puis disparaissent.
+        const effets = { brume: !!k.brume, traverse: !!k.traverse };
+        delete k.brume; delete k.traverse; delete k.ventVif;
+        e.tour.deplacement = { total: n, restant: n, effets };
+        e.tour.aBouge = true;
+      });
       msg(`${herosActif().nom} peut avancer de ${n} cases : touchez les cases une par une.`);
     }
 
     function avancer({ x, y }) {
       const actif = herosActif();
-      const raison = Plateau.raisonBlocage(g, etat, actif.x, actif.y, x, y);
+      const effets = etat.tour.deplacement?.effets || {};
+      const raison = raisonDeplacementSort(actif, x, y, effets);
       if (raison) return msg(raison);
+      const monstreLa = etat.monstres.some(m => m.x === x && m.y === y);
+      if (monstreLa && etat.tour.deplacement.restant === 1)
+        return msg('Voile de brume : on traverse la case d’un monstre, mais on ne peut pas s’y arrêter.');
       // Piège connu sur la case : on propose de sauter (ou de descendre dans la fosse).
       const piege = Plateau.piegeEn(etat, x, y);
       if (piege && (piege.trouve || piege.declenche)) {
@@ -577,9 +592,24 @@ const VuePlateau = (() => {
       msg(etat.tour.deplacement ? (surHeros ? `${actif.nom} passe la case de ${surHeros.nom}.` : '') : `${actif.nom} a utilisé tout son déplacement.`);
     }
 
+    // Raison de refuser un pas, en tenant compte des sorts de déplacement en cours.
+    function raisonDeplacementSort(h, x, y, effets) {
+      if (!effets.brume && !effets.traverse) return Plateau.raisonBlocage(g, etat, h.x, h.y, x, y);
+      if (x < 0 || y < 0 || x >= L || y >= H) return 'Hors du plateau.';
+      if (Math.abs(x - h.x) + Math.abs(y - h.y) !== 1) return 'Une case à la fois, sans diagonale : touchez une case voisine du héros.';
+      if (g.zones[Plateau.idx(L, x, y)] === '#') return 'Roche : impossible de passer.';
+      if (Plateau.eboulementEn(etat, x, y)) return 'Un éboulement bloque le passage pour toujours.';
+      if (!effets.traverse && !Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, x, y))) return 'Un mur ou une porte fermée bloque le passage.';
+      if (!effets.brume && etat.monstres.some(m => m.x === x && m.y === y)) return 'Un monstre bloque le passage.';
+      const meuble = Plateau.meubleEn(g, x, y);
+      if (meuble) return `${meuble.nom} : on ne peut pas passer par-dessus.`;
+      return null;
+    }
+
     // Arrêter le déplacement avant d'avoir tout utilisé (permis par les règles).
     function terminerDeplacement() {
       const actif = herosActif();
+      if (etat.monstres.some(m => m.x === actif.x && m.y === actif.y)) return msg('Voile de brume : on ne peut pas s’arrêter sur la case d’un monstre.');
       const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
       if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       fenetreActions = null;
@@ -589,12 +619,15 @@ const VuePlateau = (() => {
 
     function finDuTour() {
       const actif = herosActif();
+      if (etat.monstres.some(m => m.x === actif.x && m.y === actif.y)) return msg('On ne peut pas s’arrêter sur la case d’un monstre : avancez encore.');
       if (etat.tour.deplacement) {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
       fenetreActions = null; ciblage = false; combat = null; conclusion = null; evenement = null;
       modifier(e => {
+        const k = e.heros.find(z => z.id === actif.id);
+        if (k) delete k.passeTour; // la Tempête ne dure qu'un tour
         e.tour = { numero: e.tour.numero, index: e.tour.index + 1 };
         if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
       });
@@ -669,12 +702,21 @@ const VuePlateau = (() => {
       while (z.n < z.file.length) {
         const m = e.monstres.find(k => k.id === z.file[z.n]);
         if (!m) { z.n++; continue; }
+        const nomM = infoMonstre(m.type).nom;
+        if (m.passeTour) { z.plan = { monstre: m.id, statut: 'tempete', ambiance: `La tempête enveloppe ${nomM} : il passe son tour.` }; return; }
+        let reveil = '';
+        if (m.endormi) {
+          const de = 1 + Math.floor(Math.random() * 6);
+          if (de !== 6) { z.plan = { monstre: m.id, statut: 'dort', de, ambiance: Ambiance.tirer('dort', { monstre: nomM }) }; return; }
+          delete m.endormi; // réveillé au début de son tour : il agit dans ce même tour (décision du 4/11/2026)
+          reveil = Ambiance.tirer('reveil', { monstre: nomM }) + ' ';
+        }
         const dep = Regles.valeurMonstre(caracs, m, 'deplacement');
         if (dep === null || Regles.valeurMonstre(caracs, m, 'attaque') === null) { z.plan = { monstre: m.id, erreur: true }; return; }
         const plan = { monstre: m.id, ...Plateau.planMonstre(g, e, m, dep) };
         const h = plan.cible && e.heros.find(k => k.id === plan.cible);
         const cat = !e.revele.includes(Plateau.idx(L, m.x, m.y)) ? 'ombre' : !plan.chemin.length ? (h ? 'attaque' : 'immobile') : 'approche';
-        plan.ambiance = Ambiance.tirer(cat, { monstre: infoMonstre(m.type).nom, heros: h?.nom || 'les héros', type: m.type });
+        plan.ambiance = reveil + Ambiance.tirer(cat, { monstre: infoMonstre(m.type).nom, heros: h?.nom || 'les héros', type: m.type });
         z.plan = plan;
         return;
       }
@@ -686,6 +728,8 @@ const VuePlateau = (() => {
       const m = etat.monstres.find(k => k.id === p.monstre);
       const nom = nomVisible(m);
       if (p.erreur) return `${infoMonstre(m.type).nom} : déplacement ou attaque inconnus (Réglages › Caractéristiques).`;
+      if (p.statut === 'tempete') return `${nom} passe son tour (Tempête).`;
+      if (p.statut === 'dort') return `${nom} dort (dé de réveil : ${p.de}, il fallait un 6).`;
       const h = p.cible && etat.heros.find(k => k.id === p.cible);
       const pas = p.chemin.length;
       if (!pas && h) return `${nom} attaque ${h.nom} sans bouger.`;
@@ -701,6 +745,10 @@ const VuePlateau = (() => {
       const p = etat.zargon?.plan;
       if (!p || animation) return;
       if (p.erreur) return passerMonstre();
+      if (p.statut) {
+        modifier(e => { const k = e.monstres.find(q => q.id === p.monstre); if (k) delete k.passeTour; e.zargon.n++; preparerZargon(e); });
+        return;
+      }
       const m = etat.monstres.find(k => k.id === p.monstre);
       const depart = [m.x, m.y];
       // Animation : on déplace le pion case par case, puis on remet tout en place
@@ -745,12 +793,14 @@ const VuePlateau = (() => {
 
     // Le joueur indique ses boucliers blancs : blessures, puis conclusion.
     function defendre(blancs) {
-      const d = etat.zargon.defense;
+      const d = etat.zargon?.defense;
+      if (!d) return;
       const h = etat.heros.find(k => k.id === d.heros);
       const m = etat.monstres.find(k => k.id === d.monstre);
       const degats = Math.max(0, d.cranes - blancs);
       modifier(e => {
         const k = e.heros.find(z => z.id === d.heros);
+        if (degats > 0) delete k.peauRoc;
         k.corps = Math.max(0, (k.corps ?? 0) - degats);
         e.zargon.defense = null;
         e.zargon.n++; preparerZargon(e);
@@ -815,23 +865,35 @@ const VuePlateau = (() => {
       const h = herosActif();
       const m = etat.monstres.find(k => k.id === combat.monstre);
       const nom = infoMonstre(m.type).nom;
-      const tirage = Regles.lancer(caracMonstre(m, 'defense'));
+      // Monstre endormi : il se réveille sur un 6 et se défend ; sinon il ne se défend pas.
+      let noteSommeil = '';
+      let nbDef = caracMonstre(m, 'defense');
+      if (m.endormi) {
+        const de = 1 + Math.floor(Math.random() * 6);
+        if (de === 6) noteSommeil = ` (${nom} se réveille sur un 6 et se défend.)`;
+        else { nbDef = 0; noteSommeil = ` (${nom} dort — dé de réveil : ${de} — il ne se défend pas.)`; }
+      }
+      const tirage = Regles.lancer(nbDef);
       const noirs = Regles.compter(tirage, 'noir');
       const degats = Math.max(0, cranes - noirs);
       const vieAvant = m.corps ?? 1;
       const vieApres = Math.max(0, vieAvant - degats);
+      const parSort = !!combat?.djinn;
       combat = null;
       modifier(e => {
-        if (e.tour.deplacement) e.tour.deplacement = null; // une action termine le déplacement en cours
-        e.tour.actions = (e.tour.actions || 0) + 1;
+        if (!parSort) {
+          if (e.tour.deplacement) e.tour.deplacement = null; // une action termine le déplacement en cours
+          e.tour.actions = (e.tour.actions || 0) + 1;
+        }
         const k = e.monstres.find(z => z.id === m.id);
+        if (noteSommeil.includes('réveille')) delete k.endormi;
         k.corps = vieApres;
         if (vieApres === 0) e.monstres = e.monstres.filter(z => z.id !== m.id);
       });
       const valeurs = { heros: h.nom, monstre: nom, type: m.type };
       conclusion = {
         genre: 'heros', heros: h.id, monstre: m.id, type: m.type, monstreCourt: infoMonstre(m.type).court,
-        tirage, cranes, noirs, degats, vieMonstre: vieApres, vieMonstreMax: m.corpsMax, cle: 'h' + Date.now(),
+        tirage, cranes, noirs, degats, vieMonstre: vieApres, vieMonstreMax: m.corpsMax, cle: 'h' + Date.now(), note: noteSommeil,
         ambiance: Ambiance.tirer(vieApres === 0 ? 'mort' : degats ? 'monstreBlesse' : 'monstreIndemne', valeurs),
       };
       msg('');
@@ -852,6 +914,7 @@ const VuePlateau = (() => {
 
     function blesser(e, hid, n) {
       const h = e.heros.find(k => k.id === hid);
+      if (n > 0) delete h.peauRoc; // Une peau de roc prend fin à la première blessure
       h.corps = Math.max(0, (h.corps ?? 0) - n);
       return h.corps;
     }
@@ -1256,8 +1319,20 @@ const VuePlateau = (() => {
       const amb = ev.ambiance ? `<p class="ambiance grande">${echapperTexte(ev.ambiance)}</p>` : '';
       if (ev.genre === 'fin') return `${tete}<p class="titre-zargon">${echapperTexte(ev.titre)}</p>${amb}
         ${ev.avertissement ? `<p class="erreur petit">${echapperTexte(ev.avertissement)}</p>` : ''}
-        <p class="resultat">${echapperTexte(ev.texte)}</p>
-        <div class="choix"><button id="ev-ok" class="principal">OK</button></div>`;
+        ${ev.tirage ? `<p class="legende">${echapperTexte(ev.legende || '')}</p>${htmlDes(ev.tirage, ev.cle)}` : ''}
+        <div class="${ev.tirage ? 'apres-des' : ''}">
+          <p class="resultat">${echapperTexte(ev.texte)}</p>
+          <div class="choix"><button id="ev-ok" class="principal">OK</button></div>
+        </div>`;
+      if (ev.genre === 'cibleSort') return `${tete}${htmlCibles(ev)}`;
+      if (ev.genre === 'djinn') return `${tete}${htmlDjinn()}`;
+      if (ev.genre === 'questionSort') return `${tete}<p class="titre-zargon">${Sorts.sort(ev.sort).nom}</p>${amb}
+        ${ev.avertissement ? `<p class="erreur petit">${echapperTexte(ev.avertissement)}</p>` : ''}
+        <p class="question">${echapperTexte(ev.question)}</p>
+        <div class="choix">${ev.reponses.map(([v, t]) => `<button data-reponse-sort="${v}">${t}</button>`).join('')}</div>`;
+      if (ev.genre === 'reveil') return `${tete}<p class="titre-zargon">${echapperTexte(h.nom)} est endormi</p>
+        <p class="question">Lancez 1 dé à six faces : avez-vous fait 6 ?</p>
+        <div class="choix"><button data-reveil="1" class="principal">Oui, 6 : réveillé</button><button data-reveil="0">Non</button></div>`;
       if (ev.genre === 'lance') return `${tete}<p class="titre-zargon">Piège à lance !</p>${amb}
         <p class="question">${h.nom} : lancez 1 dé de combat.</p>
         <div class="choix"><button data-lance="1">💀 Crâne</button><button data-lance="0">Pas de crâne</button></div>`;
@@ -1344,10 +1419,231 @@ const VuePlateau = (() => {
       boite.querySelectorAll('[data-saut]').forEach(b => b.addEventListener('click', () => sauter(b.dataset.saut === '1')));
       boite.querySelectorAll('[data-face]').forEach(b => b.addEventListener('click', () => resoudreDesamorcage(b.dataset.face)));
       sur('#ev-piocher', piocherVirtuelle);
+      boite.querySelectorAll('[data-cible-sort]').forEach(b => b.addEventListener('click', () => {
+        const [genre, id] = b.dataset.cibleSort.split(':');
+        lancerSort(evenement.sort, { genre, id });
+      }));
+      boite.querySelectorAll('[data-reponse-sort]').forEach(b => b.addEventListener('click', () => repondreSort(b.dataset.reponseSort)));
+      boite.querySelectorAll('[data-djinn-monstre]').forEach(b => b.addEventListener('click', () => djinnAttaque(b.dataset.djinnMonstre)));
+      boite.querySelectorAll('[data-djinn-porte]').forEach(b => b.addEventListener('click', () => djinnPorte(b.dataset.djinnPorte)));
+      boite.querySelectorAll('[data-reveil]').forEach(b => b.addEventListener('click', () => {
+        const hid = herosActif().id, ok = b.dataset.reveil === '1';
+        modifier(e => { if (ok) delete e.heros.find(z => z.id === hid).endormi; });
+        evenement = null; msg(ok ? 'Réveillé !' : 'Toujours endormi : il ne peut ni bouger ni agir ce tour-ci.'); dessiner();
+      }));
       boite.querySelectorAll('[data-carte]').forEach(b => b.addEventListener('click', () => carteReelle(b.dataset.carte)));
       boite.querySelectorAll('[data-errant]').forEach(b => b.addEventListener('click', () => monstreErrant(b.dataset.errant)));
       boite.querySelectorAll('[data-blancs-errant]').forEach(b => b.addEventListener('click', () => defendreErrant(+b.dataset.blancsErrant)));
       boite.querySelectorAll('[data-face-meuble]').forEach(b => b.addEventListener('click', () => resoudreDesamorcageMeuble(b.dataset.faceMeuble)));
+    }
+
+    /* ---------- Sorts ----------
+       Lancer un sort est l'action du tour ; chaque sort ne sert qu'une fois par quête.
+       La cible doit être visible (les figurines bloquent la vue), sauf Djinn et
+       Feu du courroux : sinon, avertissement (principe d'arbitrage). */
+
+    const sortsDe = h => etat.sorts?.[h.id] || [];
+
+    // Effets en cours sur un héros, pour la fiche et la fenêtre Actions.
+    function effetsHeros(h) {
+      const e = [];
+      if (h.courage) e.push('Courage (+2 dés d’attaque)');
+      if (h.peauRoc) e.push('Peau de roc (+2 dés de défense)');
+      if (h.ventVif) e.push('Vent vif (prochain déplacement : 4 dés)');
+      if (h.brume) e.push('Voile de brume (prochain déplacement)');
+      if (h.traverse) e.push('Au travers de la pierre (prochain déplacement)');
+      if (h.endormi) e.push('Endormi');
+      if (h.passeTour) e.push('Passe son prochain tour (Tempête)');
+      if (Plateau.fosseEn(etat, h.x, h.y)) e.push('Dans une fosse (−1 dé)');
+      return e;
+    }
+
+    // Une cible est-elle visible depuis le lanceur ? (les autres figurines bloquent la ligne)
+    function cibleVisible(lanceur, f) {
+      if (f.x === lanceur.x && f.y === lanceur.y) return true;
+      if (!etat.revele.includes(Plateau.idx(L, f.x, f.y))) return false;
+      const obstacles = new Set([...etat.heros.filter(h => h.x != null), ...etat.monstres].map(k => Plateau.idx(L, k.x, k.y)));
+      obstacles.delete(Plateau.idx(L, lanceur.x, lanceur.y));
+      return Plateau.ligneDeVue(g, etat, lanceur.x, lanceur.y, f.x, f.y, obstacles);
+    }
+
+    function choisirSort(id) {
+      const s = Sorts.sort(id);
+      fenetreActions = null;
+      evenement = { genre: s.id === 'djinn' ? 'djinn' : 'cibleSort', sort: id };
+      dessiner();
+    }
+
+    // Marque le sort comme utilisé et compte l'action (avec les avertissements habituels).
+    function consommerSort(e, hid, id) {
+      const x = e.sorts[hid].find(k => k.id === id);
+      if (x) x.utilise = true;
+      if (e.tour.deplacement) e.tour.deplacement = null;
+      e.tour.actions = (e.tour.actions || 0) + 1;
+    }
+
+    function lancerSort(id, cible) { // cible : { genre: 'heros' | 'monstre', id }
+      const h = herosActif(), s = Sorts.sort(id);
+      const amb = Ambiance.tirer('sort', { heros: h.nom });
+      const titre = `${s.nom}`;
+      const visee = cible.genre === 'heros' ? etat.heros.find(k => k.id === cible.id) : etat.monstres.find(k => k.id === cible.id);
+      const nomC = cible.genre === 'heros' ? visee.nom : infoMonstre(visee.type).nom;
+      const avert = [];
+      if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
+      if (!s.partout && !cibleVisible(h, visee)) avert.push(`${nomC} n’est pas en vue.`);
+      const avertissement = avert.length ? '⚠ ' + avert.join(' ') + ' (Sort lancé quand même.)' : '';
+      const fin = (texte, extra = {}) => { evenement = { genre: 'fin', titre, ambiance: amb, avertissement, texte, ...extra }; dessiner(); };
+      const surHeros = f => modifier(e => { consommerSort(e, h.id, id); f(e.heros.find(k => k.id === cible.id), e); });
+      const surMonstre = f => modifier(e => { consommerSort(e, h.id, id); f(e.monstres.find(k => k.id === cible.id), e); });
+
+      switch (id) {
+        case 'tempete':
+          cible.genre === 'heros' ? surHeros(k => { k.passeTour = true; }) : surMonstre(k => { k.passeTour = true; });
+          return fin(`${nomC} passera son prochain tour.`);
+        case 'ventVif':
+          surHeros(k => { k.ventVif = true; });
+          return fin(`Au prochain déplacement, ${nomC} lancera 4 dés rouges.`);
+        case 'brume':
+          surHeros(k => { k.brume = true; });
+          return fin(`Au prochain déplacement, ${nomC} pourra traverser les cases occupées (sans s’y arrêter).`);
+        case 'traversPierre':
+          surHeros(k => { k.traverse = true; });
+          return fin(`Au prochain déplacement, ${nomC} traversera les murs.`);
+        case 'courage':
+          surHeros(k => { k.courage = true; });
+          return fin(`${nomC} gagne 2 dés d’attaque tant qu’un monstre est en vue.`);
+        case 'peauRoc':
+          surHeros(k => { k.peauRoc = true; });
+          return fin(`${nomC} gagne 2 dés de défense jusqu’à sa première blessure.`);
+        case 'eauGuerison': case 'guerisonCorps': {
+          let gain = 0;
+          surHeros(k => { const avant = k.corps ?? 0; k.corps = Math.min(k.corpsMax ?? avant + 4, avant + 4); gain = k.corps - avant; });
+          return fin(`${nomC} récupère ${gain} point${gain > 1 ? 's' : ''} de Vie (${visee.corps}${visee.corpsMax ? ' / ' + visee.corpsMax : ''}).`);
+        }
+        case 'sommeil':
+          if (cible.genre === 'monstre') {
+            const esprit = Regles.valeurMonstre(caracs, visee, 'esprit') ?? 0;
+            const tirage = Regles.lancer(esprit);
+            const resiste = tirage.some(f => f === 'blanc' || f === 'noir');
+            surMonstre(k => { if (!resiste) k.endormi = true; });
+            return fin(resiste ? `${nomC} résiste au sommeil (un bouclier sur ${esprit} dé${esprit > 1 ? 's' : ''}).` : `${nomC} s’endort : il ne bouge plus et ne se défend plus, jusqu’à ce qu’il fasse un 6.`,
+              { tirage, cle: 'so' + Date.now(), legende: `Résistance de ${nomC} (1 dé par point d’Esprit)` });
+          }
+          evenement = { genre: 'questionSort', sort: id, cible, avertissement, ambiance: amb,
+            question: `${nomC} résiste avec ${visee.espritMax ?? visee.esprit ?? '?'} dé(s) (1 par point d’Esprit). A-t-il obtenu au moins un bouclier ?`,
+            reponses: [['resiste', 'Oui, un bouclier'], ['dort', 'Non']] };
+          return dessiner();
+        case 'bouleFeu':
+          if (cible.genre === 'monstre') {
+            const tirage = Regles.lancer(2);
+            const degats = Math.max(0, 2 - Regles.compter(tirage, 'crane'));
+            const res = degatsMonstre(cible.id, degats, h, e => consommerSort(e, h.id, id));
+            return fin(`${nomC} lance 2 dés : chaque crâne réduit la perte. ${degats ? `${degats} point${degats > 1 ? 's' : ''} de Vie perdu${degats > 1 ? 's' : ''}.` : 'Aucune perte !'}${res}`,
+              { tirage, cle: 'bf' + Date.now(), legende: `Riposte de ${nomC}` });
+          }
+          evenement = { genre: 'questionSort', sort: id, cible, avertissement, ambiance: amb,
+            question: `${nomC} lance 2 dés de combat : combien de crânes ? (chacun réduit la perte de 1)`, reponses: [['0', '0'], ['1', '1'], ['2', '2']] };
+          return dessiner();
+        case 'feuCourroux':
+          if (cible.genre === 'monstre') {
+            const tirage = Regles.lancer(1);
+            const pare = tirage.some(f => f === 'blanc' || f === 'noir');
+            const res = pare ? '' : degatsMonstre(cible.id, 1, h, e => consommerSort(e, h.id, id));
+            if (pare) modifier(e => consommerSort(e, h.id, id));
+            return fin(pare ? `${nomC} obtient un bouclier : le feu ne l’atteint pas.` : `${nomC} perd 1 point de Vie.${res}`,
+              { tirage, cle: 'fc' + Date.now(), legende: `Dé de ${nomC}` });
+          }
+          evenement = { genre: 'questionSort', sort: id, cible, avertissement, ambiance: amb,
+            question: `${nomC} lance 1 dé de combat : un bouclier ?`, reponses: [['pare', 'Oui, un bouclier'], ['touche', 'Non']] };
+          return dessiner();
+      }
+    }
+
+    // Réponse du joueur quand la cible d'un sort est un héros (il lance lui-même ses dés).
+    function repondreSort(r) {
+      const ev = evenement, h = herosActif(), s = Sorts.sort(ev.sort);
+      const k0 = etat.heros.find(z => z.id === ev.cible.id);
+      let texte = '';
+      modifier(e => {
+        consommerSort(e, h.id, ev.sort);
+        const k = e.heros.find(z => z.id === ev.cible.id);
+        if (ev.sort === 'sommeil') { if (r === 'dort') k.endormi = true; texte = r === 'dort' ? `${k.nom} s’endort.` : `${k.nom} résiste au sommeil.`; }
+        if (ev.sort === 'bouleFeu') { const d = Math.max(0, 2 - +r); const v = blesser(e, k.id, d); texte = d ? `${k.nom} perd ${d} point${d > 1 ? 's' : ''} de Vie (reste ${v}).` : `${k.nom} ne perd rien.`; }
+        if (ev.sort === 'feuCourroux') { if (r === 'touche') { const v = blesser(e, k.id, 1); texte = `${k.nom} perd 1 point de Vie (reste ${v}).`; } else texte = `${k.nom} pare le feu.`; }
+      });
+      evenement = { genre: 'fin', titre: s.nom, ambiance: ev.ambiance, avertissement: ev.avertissement, texte: texte || k0.nom };
+      dessiner();
+    }
+
+    // Blessures infligées à un monstre par un sort ; renvoie le texte de fin (vaincu…).
+    function degatsMonstre(mid, degats, h, avant) {
+      const m = etat.monstres.find(k => k.id === mid);
+      const nom = infoMonstre(m.type).nom;
+      let texte = '';
+      modifier(e => {
+        avant?.(e);
+        const k = e.monstres.find(z => z.id === mid);
+        k.corps = Math.max(0, (k.corps ?? 1) - degats);
+        if (k.corps === 0) { e.monstres = e.monstres.filter(z => z.id !== mid); texte = ` ${nom} est vaincu ! ${Ambiance.tirer('mort', { monstre: nom, heros: h.nom, type: m.type })}`; }
+        else if (degats) texte = ` ${nom} : ${k.corps} point${k.corps > 1 ? 's' : ''} de Vie restant${k.corps > 1 ? 's' : ''}.`;
+      });
+      return texte;
+    }
+
+    // Djinn : attaque n'importe quelle figurine avec 5 dés (le joueur les lance), ou ouvre n'importe quelle porte.
+    function djinnAttaque(mid) {
+      const h = herosActif();
+      modifier(e => consommerSort(e, h.id, 'djinn'));
+      evenement = null;
+      combat = { monstre: mid, djinn: true, des: 5, ambiance: 'Un génie de vent tourbillonnant surgit et fond sur sa proie !' };
+      dessiner();
+    }
+    function djinnPorte(pid) {
+      const h = herosActif();
+      modifier(e => { consommerSort(e, h.id, 'djinn'); if (!e.portesOuvertes.includes(pid)) e.portesOuvertes.push(pid); });
+      evenement = { genre: 'fin', titre: 'Djinn', ambiance: 'Le génie souffle : la porte s’ouvre à la volée.', texte: 'La porte est ouverte et la pièce dévoilée.' };
+      dessiner();
+    }
+
+    function htmlSorts() {
+      const h = herosActif();
+      const liste = sortsDe(h);
+      return `<div class="liste-sorts">${liste.map(x => {
+        const s = Sorts.sort(x.id);
+        return `<button data-sort="${x.id}" ${x.utilise ? 'disabled' : ''}><strong>${Sorts.groupe(s.groupe).symbole} ${s.nom}${x.utilise ? ' (utilisé)' : ''}</strong>
+          <span class="petit">${s.resume}</span></button>`;
+      }).join('')}</div>`;
+    }
+
+    function htmlCibles(ev) {
+      const h = herosActif(), s = Sorts.sort(ev.sort);
+      const vu = new Set(etat.revele);
+      const heros = s.cible === 'monstre' ? [] : etat.heros.filter(k => k.x != null && k.corps !== 0);
+      const monstres = s.cible === 'heros' ? [] : etat.monstres.filter(m => vu.has(Plateau.idx(L, m.x, m.y)));
+      const bouton = (genre, f, nom) => {
+        const hv = !s.partout && !cibleVisible(h, f);
+        return `<button data-cible-sort="${genre}:${f.id}">${echapperTexte(nom)}${f.id === h.id ? ' (soi-même)' : ''}${hv ? ' — hors de vue ⚠' : ''}</button>`;
+      };
+      return `<p class="titre-zargon">${Sorts.groupe(s.groupe).symbole} ${s.nom}</p>
+        <p class="discret">${s.resume}</p>
+        <p class="question">Choisissez la cible :</p>
+        <div class="choix">${heros.map(k => bouton('heros', k, k.nom)).join('')}${monstres.map(m => bouton('monstre', m, infoMonstre(m.type).nom)).join('')}</div>
+        ${!heros.length && !monstres.length ? '<p class="erreur">Aucune cible possible.</p>' : ''}
+        <div class="choix"><button id="ev-annuler">Annuler</button></div>`;
+    }
+
+    function htmlDjinn() {
+      const vu = new Set(etat.revele);
+      const monstres = etat.monstres.filter(m => vu.has(Plateau.idx(L, m.x, m.y)));
+      const portes = (quete.portes || []).filter(p => !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p)
+        && [p.a, p.b].some(([x, y]) => vu.has(Plateau.idx(L, x, y))));
+      const nomPorte = p => { const z = [p.a, p.b].map(([x, y]) => Plateau.pieceDe(g, x, y)).find(Boolean); return z ? `Porte de la pièce ${z}` : 'Porte'; };
+      return `<p class="titre-zargon">🌪 Djinn</p><p class="discret">${Sorts.sort('djinn').resume}</p>
+        <h3 class="titre-section">Attaquer (5 dés)</h3>
+        <div class="choix">${monstres.map(m => `<button data-djinn-monstre="${m.id}">${infoMonstre(m.type).nom}</button>`).join('') || '<span class="discret">Aucun monstre connu.</span>'}</div>
+        <h3 class="titre-section">Ouvrir une porte</h3>
+        <div class="choix">${portes.map(p => `<button data-djinn-porte="${p.id}">${nomPorte(p)}</button>`).join('') || '<span class="discret">Aucune porte fermée connue.</span>'}</div>
+        <div class="choix"><button id="ev-annuler">Annuler</button></div>`;
     }
 
     /* ---------- Fenêtres de combat ----------
@@ -1424,7 +1720,7 @@ const VuePlateau = (() => {
         } else {
           texte = `${c.cranes} crâne${c.cranes > 1 ? 's' : ''} contre ${c.noirs} bouclier${c.noirs > 1 ? 's' : ''} noir${c.noirs > 1 ? 's' : ''} : `
             + (c.degats ? `${nomM} perd ${c.degats} point${c.degats > 1 ? 's' : ''} de Vie.` : 'aucune blessure.')
-            + (c.vieMonstre === 0 ? ` ${nomM} est vaincu !` : '');
+            + (c.vieMonstre === 0 ? ` ${nomM} est vaincu !` : '') + (c.note || '');
         }
         html = `<div class="duel">${gauche}<div class="centre">⚔</div>${droite}</div>
           <p class="legende">${c.genre === 'zargon' ? `Attaque de ${nomM}` : `Défense de ${nomM}`}</p>
@@ -1438,8 +1734,8 @@ const VuePlateau = (() => {
         // Duel lancé par le héros actif : on attend ses crânes.
         const h = herosActif();
         const m = etat.monstres.find(k => k.id === combat.monstre);
-        const n = caracHeros(h, 'attaque');
-        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
+        const n = combat.des ?? caracHeros(h, 'attaque');
+        html = `${combat.djinn ? '<p class="titre-zargon">🌪 Le Djinn attaque !</p>' : ''}<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
             ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'defenseur')}</div>
           <p class="ambiance">${echapperTexte(combat.ambiance)}</p>
           <p class="question">${h.nom} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat. Combien de crânes ?</p>
@@ -1469,7 +1765,8 @@ const VuePlateau = (() => {
           ${z.n === 0 && z.debut ? `<p class="ambiance">${echapperTexte(z.debut)}</p>` : ''}
           ${p.erreur ? `<p class="erreur">${echapperTexte(decrirePlan())}</p>` : `
             <div class="duel seul">${figurine('droite', cache ? Portraits.monstre('?', '?') : Portraits.monstre(m.type, infoMonstre(m.type).court), cache ? '???' : infoMonstre(m.type).nom, cache ? '?' : m.corps, cache ? null : m.corpsMax)}</div>
-            <p class="ambiance grande">${echapperTexte(p.ambiance)}</p>`}
+            <p class="ambiance grande">${echapperTexte(p.ambiance)}</p>
+            ${p.statut ? `<p class="resultat">${echapperTexte(decrirePlan())}</p>` : ''}`}
           <div class="choix">
             ${p.erreur ? '' : '<button id="md-valider" class="principal">Suivant</button>'}
             <button id="md-passer">Passer ce monstre</button>
@@ -1487,10 +1784,13 @@ const VuePlateau = (() => {
         const fait = (t.actions || 0) >= 1;
         const entete = `<button class="icone fermer-modale" id="md-fermer" aria-label="Fermer">✕</button>
           <div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}</div>`;
-        if (fenetreActions === 'des') {
+        if (fenetreActions === 'sorts') {
+          html = `${entete}<p class="titre-zargon">Sorts — ${echapperTexte(h.nom)}</p>${htmlSorts()}
+            <div class="choix"><button id="md-retour-actions">Retour</button></div>`;
+        } else if (fenetreActions === 'des') {
           html = `${entete}
-            <p class="question">${t.aBouge ? `⚠ ${h.nom} s’est déjà déplacé ce tour-ci. ` : ''}Lancez les 2 dés rouges : quel total ?</p>
-            <div class="choix nombres">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => `<button data-total="${n}">${n}</button>`).join('')}</div>
+            <p class="question">${t.aBouge ? `⚠ ${h.nom} s’est déjà déplacé ce tour-ci. ` : ''}${h.ventVif ? 'Vent vif : lancez 4 dés rouges' : 'Lancez les 2 dés rouges'} : quel total ?</p>
+            <div class="choix nombres">${Array.from({ length: h.ventVif ? 21 : 11 }, (_, k) => k + (h.ventVif ? 4 : 2)).map(n => `<button data-total="${n}">${n}</button>`).join('')}</div>
             <div class="choix"><button id="md-retour-actions">Retour</button></div>`;
         } else {
           html = `${entete}
@@ -1503,9 +1803,13 @@ const VuePlateau = (() => {
                 : `<button id="md-deplacer" class="${t.aBouge ? '' : 'principal'}">${t.aBouge ? 'Se déplacer encore ⚠' : 'Se déplacer'}</button>`}
             </div>
             ${t.finForcee ? `<p class="erreur petit">⚠ Un piège a mis fin au tour de ${echapperTexte(h.nom)} : normalement, il ne fait plus rien ce tour-ci.</p>` : ''}
+            ${h.passeTour ? `<p class="erreur petit">⚠ Tempête : ${echapperTexte(h.nom)} devrait passer ce tour.</p>` : ''}
+            ${h.endormi ? `<p class="erreur petit">⚠ ${echapperTexte(h.nom)} est endormi : il ne bouge ni n’agit, sauf s’il fait un 6. <button id="md-reveil">Tenter de se réveiller</button></p>` : ''}
+            ${effetsHeros(h).length ? `<p class="etat-heros">${effetsHeros(h).map(echapperTexte).join(' · ')}</p>` : ''}
             <h3 class="titre-section">Actions${fait ? ' ⚠' : ''}</h3>
             <div class="choix">
               ${cibles.length ? `<button id="md-attaquer" class="${fait ? '' : 'principal'}">Attaquer</button>` : ''}
+              ${sortsDe(h).some(x => !x.utilise) ? '<button id="md-sorts">Lancer un sort</button>' : ''}
               <button id="md-fouille-tresor">Fouiller : trésor</button>
               <button id="md-fouille-portes">Fouiller : portes secrètes</button>
               <button id="md-fouille-pieges">Fouiller : pièges</button>
@@ -1513,7 +1817,7 @@ const VuePlateau = (() => {
               ${meublesDesamorcables().map(m => `<button data-desarmer-meuble="${m.id}">Désamorcer : ${echapperTexte(m.nom)}</button>`).join('')}
             </div>
             ${monstreVisible() ? '<p class="discret petit">Un monstre est visible : les règles interdisent de fouiller (l’application vous laissera faire, avec un avertissement).</p>' : ''}
-            <p class="discret petit">Les sorts arriveront à la prochaine étape.</p>
+
             <div class="choix"><button id="md-fiche">Fiche de ${echapperTexte(h.nom)}</button></div>`;
         }
       }
@@ -1533,6 +1837,9 @@ const VuePlateau = (() => {
       sur('#md-attaquer', () => { fenetreActions = null; commencerAttaque(); });
       sur('#md-fouille-portes', () => { fenetreActions = null; fouiller('portes'); });
       sur('#md-fouille-tresor', () => { fenetreActions = null; fouillerTresor(); });
+      sur('#md-sorts', () => { fenetreActions = 'sorts'; dessiner(); });
+      sur('#md-reveil', () => { fenetreActions = null; evenement = { genre: 'reveil' }; dessiner(); });
+      boite.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => choisirSort(b.dataset.sort)));
       boite.querySelectorAll('[data-desarmer-meuble]').forEach(b => b.addEventListener('click', () => { fenetreActions = null; evenement = { genre: 'desarmerMeuble', meuble: b.dataset.desarmerMeuble }; dessiner(); }));
       sur('#md-fouille-pieges', () => { fenetreActions = null; fouiller('pieges'); });
       sur('#md-desamorcer', () => { fenetreActions = null; evenement = { genre: 'desarmer', piege: piegesDesamorcables()[0].id }; dessiner(); });
@@ -1570,8 +1877,10 @@ const VuePlateau = (() => {
         ${compteur('Vie', 'corps')}
         ${compteur('Esprit', 'esprit')}
         ${h.corps === 0 ? '<p class="erreur">⚠ 0 point de Vie : le héros meurt, sauf potion ou sort de soin.</p>' : ''}
+        ${effetsHeros(h).length ? `<p class="etat-heros">${effetsHeros(h).map(echapperTexte).join(' · ')}</p>` : ''}
         ${compteur('Or', 'or', [1, 10])}
         <table class="caracs petite"><tbody>${ligne('Dés d’attaque', 'attaque')}${ligne('Dés de défense', 'defense')}</tbody></table>
+        ${sortsDe(h).length ? `<h3>Sorts</h3><p class="petit">${sortsDe(h).map(x => `${Sorts.sort(x.id).nom}${x.utilise ? ' <span class="discret">(utilisé)</span>' : ''}`).join(' · ')}</p>` : ''}
         <h3>Inventaire</h3>
         ${inventaire.length ? `<ul class="inventaire">${inventaire.map((o, k) => `<li><span>${echapperTexte(o.nom)}</span>
             <button class="icone petit-bouton" data-retirer="${k}" aria-label="Retirer ${echapperTexte(o.nom)}">✕</button></li>`).join('')}</ul>`

@@ -417,3 +417,13 @@ button.petit-bouton { min-width: 40px; min-height: 40px; font-size: 1rem; }
 /* ---------- Trésors et meubles piégés (v0.14.0) ---------- */
 .alerte-meuble { fill: #ffd76a; font-size: 14px; font-weight: 700; text-anchor: middle; pointer-events: none; }
 .alerte-meuble.cache { fill: #ff8a7a; }
+
+/* ---------- Sorts (v0.15.0) ---------- */
+.grille-groupes-sorts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 10px 0; }
+.groupe-sort { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 14px; min-height: 72px; text-align: left; }
+.groupe-sort .titre { font-weight: 700; font-size: 1.05rem; color: var(--or); }
+.liste-sorts { display: grid; gap: 8px; margin: 8px 0; }
+.liste-sorts button { display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: 8px 12px; min-height: 56px; }
+.liste-sorts button .petit { color: var(--discret); font-weight: 400; }
+.liste-sorts button:disabled { opacity: 0.4; }
+.etat-heros { margin: 4px 0; font-size: 0.9rem; color: #c8b8ff; }

@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.14.0';
+const VERSION_APP = '0.15.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -112,7 +112,7 @@ async function afficherPartie(id) {
   };
 
   // Quête en cours : écran de jeu plein écran (sans en-tête ni onglets, sans défilement).
-  if (partie.quete && partie.etat?.ordre) {
+  if (partie.quete && partie.etat?.ordre && !besoinRepartition(partie)) {
     document.body.classList.add('mode-jeu');
     vue.innerHTML = '<div id="zone-plateau" class="zone-jeu"></div>';
     const caracs = await lireCaracs();
@@ -160,8 +160,15 @@ async function afficherPartie(id) {
       </div>
     </section>`;
 
-  // Plateau : démarrer la quête de démonstration, ou fixer l'ordre de jeu avant le début.
-  if (partie.quete) {
+  // Plateau : démarrer la quête de démonstration, ou fixer l'ordre de jeu (puis les sorts) avant le début.
+  if (partie.quete && partie.etat?.ordre) {
+    choisirSorts($('#zone-plateau'), partie, async sorts => {
+      partie.etat.sorts = sorts;
+      await enregistrerPartie();
+      afficherPartie(id);
+    });
+    $('#btn-abandon').addEventListener('click', abandonnerQuete);
+  } else if (partie.quete) {
     // Avant le début : fixer l'ordre de jeu des héros. La quête démarre ensuite.
     choisirOrdre($('#zone-plateau'), partie, async ordre => {
       partie.etat.ordre = ordre;
@@ -249,6 +256,75 @@ function choisirOrdre(conteneur, partie, valider) {
       dessiner();
     });
     conteneur.querySelector('#btn-commencer').addEventListener('click', () => valider([...ordre]));
+  }
+  dessiner();
+}
+
+/* ---------- Répartition des sorts (avant le début de la quête) ----------
+   Règle : l'Enchanteur choisit un groupe, puis l'Elfe un groupe parmi les trois
+   restants ; l'Enchanteur prend les deux derniers. Sans Elfe, l'Enchanteur choisit
+   ses trois groupes ; sans Enchanteur, l'Elfe choisit le sien. */
+
+function besoinRepartition(partie) {
+  const h = partie.etat?.heros || [];
+  return !partie.etat?.sorts && h.some(k => ['elfe', 'enchanteur'].includes(k.classe || k.id));
+}
+
+function choisirSorts(conteneur, partie, valider) {
+  const heros = partie.etat.heros;
+  const ench = heros.find(k => (k.classe || k.id) === 'enchanteur');
+  const elfe = heros.find(k => (k.classe || k.id) === 'elfe');
+  // Étapes : qui choisit, et combien de groupes à cette étape.
+  const etapes = ench && elfe ? [['enchanteur', 1], ['elfe', 1]] : ench ? [['enchanteur', 3]] : [['elfe', 1]];
+  let choix = { enchanteur: [], elfe: [] };
+  let etape = 0;
+
+  function termine() {
+    if (ench && elfe) {
+      const pris = [...choix.enchanteur, ...choix.elfe];
+      choix.enchanteur.push(...Sorts.GROUPES.map(g => g.id).filter(g => !pris.includes(g)));
+    }
+    const sorts = {};
+    if (ench) sorts[ench.id] = Sorts.deGroupes(choix.enchanteur);
+    if (elfe) sorts[elfe.id] = Sorts.deGroupes(choix.elfe);
+    return sorts;
+  }
+
+  function dessiner() {
+    const fini = etape >= etapes.length;
+    const [qui, combien] = fini ? [] : etapes[etape];
+    const lanceur = qui === 'enchanteur' ? ench : elfe;
+    const pris = [...choix.enchanteur, ...choix.elfe];
+    const resultat = fini ? termine() : null;
+    conteneur.innerHTML = `
+      <p>Les sorts se répartissent en quatre groupes de trois. ${ench && elfe
+        ? 'L’Enchanteur choisit un groupe, puis l’Elfe un groupe parmi les trois restants ; l’Enchanteur prend les deux derniers.'
+        : ench ? 'Sans Elfe dans le groupe, l’Enchanteur choisit ses trois groupes.' : 'L’Elfe choisit un groupe.'}</p>
+      <p class="discret petit">Suggestion des règles pour une première quête : le Feu pour l’Enchanteur, la Terre pour l’Elfe.</p>
+      ${fini ? `
+        <ul class="puces">${Object.entries(resultat).map(([hid, liste]) => {
+          const h = heros.find(k => k.id === hid);
+          return `<li><strong>${echapper(h.nom)}</strong> : ${liste.map(x => Sorts.sort(x.id).nom).join(', ')}</li>`;
+        }).join('')}</ul>
+        <div class="ligne"><button id="so-recommencer">Recommencer</button><button id="so-valider" class="principal">Commencer la quête</button></div>`
+      : `
+        <p class="question"><span class="pastille h-${lanceur.id}"></span> <strong>${echapper(lanceur.nom)}</strong> choisit
+          ${combien > 1 ? `ses groupes (${choix[qui].length + 1} / ${combien})` : 'un groupe'} :</p>
+        <div class="grille-groupes-sorts">
+          ${Sorts.GROUPES.filter(g => !pris.includes(g.id)).map(g => `
+            <button class="groupe-sort" data-groupe="${g.id}">
+              <span class="titre">${g.symbole} ${g.nom}</span>
+              <span class="petit">${Sorts.duGroupe(g.id).map(x => x.nom).join(' · ')}</span>
+            </button>`).join('')}
+        </div>
+        ${pris.length ? '<div class="ligne"><button id="so-recommencer">Recommencer</button></div>' : ''}`}`;
+    conteneur.querySelectorAll('[data-groupe]').forEach(b => b.addEventListener('click', () => {
+      choix[qui].push(b.dataset.groupe);
+      if (choix[qui].length >= combien) etape++;
+      dessiner();
+    }));
+    conteneur.querySelector('#so-recommencer')?.addEventListener('click', () => { choix = { enchanteur: [], elfe: [] }; etape = 0; dessiner(); });
+    conteneur.querySelector('#so-valider')?.addEventListener('click', () => valider(termine()));
   }
   dessiner();
 }
