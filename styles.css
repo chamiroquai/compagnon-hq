@@ -312,3 +312,15 @@ table.caracs.petite { margin-top: 8px; }
 .trajet .heros-vise { fill: none; stroke: #ff5a4a; stroke-width: 4; pointer-events: none; }
 .portes-tactiles rect { fill: transparent; }
 .heros .anneau { pointer-events: none; }
+
+/* ---------- Invite de porte et ambiance ---------- */
+.invite-porte {
+  position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 4;
+  display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; justify-content: center; white-space: nowrap;
+  padding: 8px 12px; max-width: 90%;
+  background: rgba(27, 23, 18, 0.95); border: 1px solid var(--or); border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+}
+.invite-porte button { min-height: 44px; }
+.porte.proposee rect:first-child { stroke: #ffe28a; stroke-width: 4; }
+.message-plateau .ambiance { color: #d8c8a8; font-style: italic; }

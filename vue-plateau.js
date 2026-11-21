@@ -70,6 +70,7 @@ const VuePlateau = (() => {
         </header>
         <div class="jeu-plateau">
           <div id="pl-cadre" class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
+          <div id="pl-invite" class="invite-porte" hidden></div>
           <p id="pl-message" class="message-plateau" hidden></p>
         </div>
         <nav class="jeu-outils" aria-label="Outils">
@@ -129,7 +130,15 @@ const VuePlateau = (() => {
     const cadre = conteneur.querySelector('#pl-cadre');
     const bulle = conteneur.querySelector('#pl-message');
     // Message affiché par-dessus le plateau ; un toucher le fait disparaître.
-    const msg = texte => { bulle.textContent = texte || ''; bulle.hidden = !texte; };
+    // msg('texte') ou msg('texte', { ambiance: '…' }, 'suite') : chaque morceau sur sa ligne,
+    // les lignes d'ambiance en italique.
+    const msg = (...morceaux) => {
+      const lignes = morceaux.filter(m => m && (typeof m === 'string' ? m.trim() : m.ambiance));
+      bulle.innerHTML = lignes.map(m => typeof m === 'string'
+        ? `<span>${echapperTexte(m)}</span>`
+        : `<em class="ambiance">${echapperTexte(m.ambiance)}</em>`).join('<br>');
+      bulle.hidden = !lignes.length;
+    };
     bulle.addEventListener('click', () => msg(''));
 
     // Taille du plateau : au zoom 1, les cases sont aussi grandes que possible
@@ -233,7 +242,7 @@ const VuePlateau = (() => {
         const cx = (Math.max(p.a[0], p.b[0]) + (horizontale ? 0.5 : 0)) * T;
         const cy = (Math.max(p.a[1], p.b[1]) + (horizontale ? 0 : 0.5)) * T;
         const w = horizontale ? T * 0.8 : T * 0.3, h = horizontale ? T * 0.3 : T * 0.8;
-        const cls = 'porte' + (ouverte ? ' ouverte' : '') + (!trouvee ? ' secrete' : '');
+        const cls = 'porte' + (ouverte ? ' ouverte' : '') + (!trouvee ? ' secrete' : '') + (porteProposee()?.id === p.id ? ' proposee' : '');
         const gr = el('g', { class: cls, 'data-porte': p.id }, svg);
         el('rect', { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: 2 }, gr);
         // Zone tactile : toute la longueur de la porte, mais peu épaisse,
@@ -316,6 +325,7 @@ const VuePlateau = (() => {
       }
 
       dessinerTour();
+      dessinerInvite();
       conteneur.querySelector('#pl-annuler').disabled = historique.length === 0;
       const bMJ = conteneur.querySelector('#pl-mj');
       bMJ.classList.toggle('actif', vueMJ);
@@ -546,13 +556,48 @@ const VuePlateau = (() => {
         if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
       });
       const suivant = herosActif();
-      msg(suivant ? `À ${suivant.nom} de jouer.` : 'Au tour de Zargon.' + (etat.zargon?.plan ? ' ' + decrirePlan() : ''));
+      if (suivant) msg(`À ${suivant.nom} de jouer.`);
+      else msg({ ambiance: Ambiance.tirer('debutZargon') }, ambiancePlan(), 'Au tour de Zargon. ' + decrirePlan());
     }
 
     function finTourZargon() {
       auto = false;
       modifier(e => { e.tour = { numero: e.tour.numero + 1, index: 0 }; delete e.zargon; });
       msg(`Tour ${etat.tour.numero} : à ${herosActif()?.nom ?? '?'} de jouer.`);
+    }
+
+    /* ---------- Invite « ouvrir la porte ? » ----------
+       Quand le héros actif se trouve contre une porte fermée qu'il connaît
+       (porte normale, ou porte secrète déjà trouvée), on lui propose de l'ouvrir. */
+
+    const refusees = new Set(); // « porte@x,y » : pas de nouvelle question tant que le héros reste là
+
+    function porteProposee() {
+      const h = herosActif();
+      if (!h || vueMJ || saisieDes || ciblage || cible) return null;
+      return (quete.portes || []).find(p =>
+        !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
+        [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
+        !refusees.has(`${p.id}@${h.x},${h.y}`)) || null;
+    }
+
+    function dessinerInvite() {
+      const boite = conteneur.querySelector('#pl-invite');
+      const p = porteProposee();
+      if (!p) { boite.hidden = true; return; }
+      const h = herosActif();
+      boite.innerHTML = `<span>${p.secrete ? 'Porte secrète' : 'Une porte'} contre ${echapperTexte(h.nom)}. L’ouvrir ?</span>
+        <button id="inv-ouvrir" class="principal">Ouvrir</button>
+        <button id="inv-non">Pas maintenant</button>`;
+      boite.hidden = false;
+      boite.querySelector('#inv-ouvrir').addEventListener('click', () => {
+        modifier(e => { e.portesOuvertes.push(p.id); });
+        msg(`${h.nom} ouvre la porte.`);
+      });
+      boite.querySelector('#inv-non').addEventListener('click', () => {
+        refusees.add(`${p.id}@${h.x},${h.y}`);
+        dessiner();
+      });
     }
 
     /* ---------- Tour de Zargon ----------
@@ -603,6 +648,19 @@ const VuePlateau = (() => {
       return `${nom} avance de ${pas} case${pas > 1 ? 's' : ''}` + (h ? ` et attaque ${h.nom}.` : ' (héros hors d’atteinte ce tour-ci).');
     }
 
+    // Ligne d'ambiance pour le monstre qui va jouer.
+    function ambiancePlan() {
+      const p = etat.zargon?.plan;
+      if (!p || p.erreur) return null;
+      const m = etat.monstres.find(k => k.id === p.monstre);
+      if (!m) return null;
+      if (!etat.revele.includes(Plateau.idx(L, m.x, m.y))) return { ambiance: Ambiance.tirer('ombre') };
+      const h = p.cible && etat.heros.find(k => k.id === p.cible);
+      const valeurs = { monstre: infoMonstre(m.type).nom, heros: h?.nom || 'les héros', type: m.type };
+      const cat = !p.chemin.length ? (h ? 'attaque' : 'immobile') : 'approche';
+      return { ambiance: Ambiance.tirer(cat, valeurs) };
+    }
+
     function suiteAuto() {
       if (auto && etat.zargon?.plan && !etat.zargon.defense) setTimeout(() => { if (auto) validerMonstre(); }, 700);
       if (!etat.zargon?.plan && !etat.zargon?.defense) auto = false;
@@ -633,7 +691,8 @@ const VuePlateau = (() => {
         }
         z.n++; preparerZargon(e);
       });
-      msg(texte + (etat.zargon.plan && !etat.zargon.defense ? ' — Suivant : ' + decrirePlan() : ''));
+      if (etat.zargon.plan && !etat.zargon.defense) msg(texte, ambiancePlan(), 'Suivant : ' + decrirePlan());
+      else msg(texte);
       suiteAuto();
     }
 
@@ -657,13 +716,15 @@ const VuePlateau = (() => {
         z.defense = null;
         z.n++; preparerZargon(e);
       });
-      msg(texte + (etat.zargon.plan ? ' — Suivant : ' + decrirePlan() : ''));
+      if (etat.zargon.plan) msg(texte, ambiancePlan(), 'Suivant : ' + decrirePlan());
+      else msg(texte, 'Tous les monstres ont joué.');
       suiteAuto();
     }
 
     function passerMonstre() {
       modifier(e => { e.zargon.n++; preparerZargon(e); });
-      msg(etat.zargon.plan ? 'Monstre passé. Suivant : ' + decrirePlan() : 'Tous les monstres ont joué.');
+      if (etat.zargon.plan) msg('Monstre passé.', ambiancePlan(), 'Suivant : ' + decrirePlan());
+      else msg('Tous les monstres ont joué.');
     }
 
     /* ---------- Attaque d'un héros ---------- */
@@ -716,18 +777,22 @@ const VuePlateau = (() => {
       const noirs = Regles.compter(tirage, 'noir');
       const degats = Math.max(0, cranes - noirs);
       cible = null;
-      let fin = '';
+      let fin = '', mort = '';
       modifier(e => {
         if (e.tour.deplacement) e.tour.deplacement = null; // une action termine le déplacement en cours
         e.tour.actions = (e.tour.actions || 0) + 1;
         const k = e.monstres.find(z => z.id === m.id);
         if (k.corps == null) k.corps = 1;
         k.corps = Math.max(0, k.corps - degats);
-        if (k.corps === 0) { e.monstres = e.monstres.filter(z => z.id !== m.id); fin = ` ${nom} est vaincu !`; }
+        if (k.corps === 0) {
+          e.monstres = e.monstres.filter(z => z.id !== m.id);
+          fin = ` ${nom} est vaincu !`;
+          mort = Ambiance.tirer('mort', { monstre: nom, heros: h.nom, type: m.type });
+        }
         else fin = degats ? ` ${nom} : ${k.corps} point${k.corps > 1 ? 's' : ''} de Vie restant${k.corps > 1 ? 's' : ''}.` : '';
       });
       msg(`${h.nom} : ${cranes} 💀. Défense ${nom} : ${Regles.afficher(tirage) || '(aucun dé)'} → ${noirs} bouclier${noirs > 1 ? 's' : ''} noir${noirs > 1 ? 's' : ''}. `
-        + (degats ? `${degats} blessure${degats > 1 ? 's' : ''}.` : 'Aucune blessure.') + fin);
+        + (degats ? `${degats} blessure${degats > 1 ? 's' : ''}.` : 'Aucune blessure.') + fin, mort ? { ambiance: mort } : null);
     }
 
     /* ---------- Fiche d'un héros ---------- */
