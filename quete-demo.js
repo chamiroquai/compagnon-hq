@@ -74,6 +74,8 @@ const QUETE_DEMO = {
     { id: 'm4', type: 'tombeau', nom: 'Tombeau', x: 17, y: 11, l: 1, h: 2 },
     { id: 'm5', type: 'cheminee', nom: 'Cheminée', x: 2, y: 17, l: 3, h: 1 },
   ],
+  // Monstres : type, case. Une figurine peut avoir ses propres caractéristiques,
+  // ex. { type: 'sorcierEffroi', x, y, nom: '…', caracs: { deplacement, attaque, defense, corps, esprit } }.
   monstres: [
     { id: 'mo1', type: 'gobelin', x: 3, y: 2 },
     { id: 'mo2', type: 'orque', x: 9, y: 2 },
@@ -90,6 +92,6 @@ const QUETE_DEMO = {
     { id: 'mo13', type: 'guerrierEffroi', x: 23, y: 11 },
     { id: 'mo14', type: 'zombie', x: 9, y: 16 },
     { id: 'mo15', type: 'gargouille', x: 17, y: 16 },
-    { id: 'mo16', type: 'sorcierEffroi', x: 23, y: 16 },
+    { id: 'mo16', type: 'orque', x: 23, y: 16 },
   ],
 };

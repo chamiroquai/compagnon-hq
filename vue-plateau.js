@@ -34,7 +34,7 @@ const VuePlateau = (() => {
     if (!etat.tour) etat.tour = { numero: 1, index: 0 }; // parties commencées avant la v0.5.0
     const caracs = options.caracs || Regles.caracsVides();
     const carac = (famille, type, champ) => Regles.valeur(caracs, famille, type, champ);
-    // Points de Corps et d'Esprit de départ, d'après les caractéristiques saisies.
+    // Points de Vie (champ « corps ») et d'Esprit de départ, d'après les caractéristiques saisies.
     // (Seulement s'ils n'existent pas encore : une quête en cours garde ses valeurs.)
     let initialise = false;
     for (const h of etat.heros) {
@@ -45,8 +45,8 @@ const VuePlateau = (() => {
       }
     }
     for (const m of etat.monstres) {
-      if (m.corps === undefined && carac('monstres', m.type, 'corps') !== null) {
-        m.corpsMax = m.corps = carac('monstres', m.type, 'corps');
+      if (m.corps === undefined && Regles.valeurMonstre(caracs, m, 'corps') !== null) {
+        m.corpsMax = m.corps = Regles.valeurMonstre(caracs, m, 'corps');
         initialise = true;
       }
     }
@@ -341,7 +341,7 @@ const VuePlateau = (() => {
       }
       if (!c) return;
       const m = etat.monstres.find(k => k.x === c.x && k.y === c.y);
-      if (m && etat.revele.includes(Plateau.idx(L, c.x, c.y))) msg(`${infoMonstre(m.type).nom} — Corps ${m.corps ?? '?'}${m.corpsMax ? '/' + m.corpsMax : ''}.`);
+      if (m && etat.revele.includes(Plateau.idx(L, c.x, c.y))) msg(`${infoMonstre(m.type).nom} — Vie ${m.corps ?? '?'}${m.corpsMax ? '/' + m.corpsMax : ''}.`);
     });
 
     // Vue MJ : pose un héros n'importe où (sauf roche, meuble ou case occupée).
@@ -520,20 +520,22 @@ const VuePlateau = (() => {
     function choisirCible(id) {
       if (!ciblesAttaque().some(m => m.id === id)) return msg('Ce monstre n’est pas à portée.');
       const m = etat.monstres.find(k => k.id === id);
-      if (carac('monstres', m.type, 'defense') === null)
-        return msg(`Défense des ${infoMonstre(m.type).nom}s inconnue : remplissez-la dans Réglages › Caractéristiques.`);
+      if (Regles.valeurMonstre(caracs, m, 'defense') === null)
+        return msg(m.caracs || Regles.infoMonstre(m.type).variable
+          ? `Défense de ce ${infoMonstre(m.type).nom} inconnue : la quête ne la donne pas. Corrigez en vue MJ.`
+          : `Défense des ${infoMonstre(m.type).nom}s inconnue : remplissez-la dans Réglages › Caractéristiques.`);
       ciblage = false; cible = id;
       const n = carac('heros', herosActif().id, 'attaque');
       msg(`Lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat, puis touchez le nombre de crânes.`);
       dessiner();
     }
 
-    // Les crânes du héros moins les boucliers noirs du monstre = points de Corps perdus.
+    // Les crânes du héros moins les boucliers noirs du monstre = points de Vie perdus.
     function resoudreAttaque(cranes) {
       const h = herosActif();
       const m = etat.monstres.find(k => k.id === cible);
       const nom = infoMonstre(m.type).nom;
-      const nbDef = carac('monstres', m.type, 'defense');
+      const nbDef = Regles.valeurMonstre(caracs, m, 'defense');
       const tirage = Regles.lancer(nbDef);
       const noirs = Regles.compter(tirage, 'noir');
       const degats = Math.max(0, cranes - noirs);
@@ -546,7 +548,7 @@ const VuePlateau = (() => {
         if (k.corps == null) k.corps = 1;
         k.corps = Math.max(0, k.corps - degats);
         if (k.corps === 0) { e.monstres = e.monstres.filter(z => z.id !== m.id); fin = ` ${nom} est vaincu !`; }
-        else fin = degats ? ` ${nom} : ${k.corps} point${k.corps > 1 ? 's' : ''} de Corps restant${k.corps > 1 ? 's' : ''}.` : '';
+        else fin = degats ? ` ${nom} : ${k.corps} point${k.corps > 1 ? 's' : ''} de Vie restant${k.corps > 1 ? 's' : ''}.` : '';
       });
       msg(`${h.nom} : ${cranes} 💀. Défense ${nom} : ${Regles.afficher(tirage) || '(aucun dé)'} → ${noirs} bouclier${noirs > 1 ? 's' : ''} noir${noirs > 1 ? 's' : ''}. `
         + (degats ? `${degats} blessure${degats > 1 ? 's' : ''}.` : 'Aucune blessure.') + fin);
@@ -572,9 +574,9 @@ const VuePlateau = (() => {
           <button class="icone" data-fermer aria-label="Fermer la fiche">✕</button>
         </div>
         ${manque.length ? `<p class="erreur petit">À remplir dans Réglages › Caractéristiques : ${manque.join(', ')}.</p>` : ''}
-        ${compteur('Corps', 'corps')}
+        ${compteur('Vie', 'corps')}
         ${compteur('Esprit', 'esprit')}
-        ${h.corps === 0 ? '<p class="erreur">⚠ 0 point de Corps : le héros meurt, sauf potion ou sort de soin.</p>' : ''}
+        ${h.corps === 0 ? '<p class="erreur">⚠ 0 point de Vie : le héros meurt, sauf potion ou sort de soin.</p>' : ''}
         <table class="caracs petite"><tbody>${ligne('Dés d’attaque', 'attaque')}${ligne('Dés de défense', 'defense')}</tbody></table>
         <p class="discret petit">Les boutons − et + servent aux blessures, soins et corrections. Ils s’annulent avec ↶.</p>`;
       fiche.hidden = false;

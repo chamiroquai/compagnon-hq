@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.7.0';
+const VERSION_APP = '0.7.1';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -425,7 +425,7 @@ function tableCaracs(caracs, famille, types, champs) {
 
 function formulaireCaracs(caracs) {
   const nbManquantes = [...Regles.TYPES_HEROS.map(t => Regles.manquantes(caracs, 'heros', t.id).length),
-    ...Regles.TYPES_MONSTRES.map(t => Regles.manquantes(caracs, 'monstres', t.id).length)].reduce((a, b) => a + b, 0);
+    ...Regles.TYPES_MONSTRES_REGLES.map(t => Regles.manquantes(caracs, 'monstres', t.id).length)].reduce((a, b) => a + b, 0);
   return `
     <section class="carte">
       <h2>Caractéristiques</h2>
@@ -435,9 +435,11 @@ function formulaireCaracs(caracs) {
       <h3>Héros</h3>
       ${tableCaracs(caracs, 'heros', Regles.TYPES_HEROS, Regles.CHAMPS_HEROS)}
       <h3>Monstres</h3>
-      ${tableCaracs(caracs, 'monstres', Regles.TYPES_MONSTRES, Regles.CHAMPS_MONSTRES)}
+      ${tableCaracs(caracs, 'monstres', Regles.TYPES_MONSTRES_REGLES, Regles.CHAMPS_MONSTRES)}
+      <p class="discret petit">Le Sorcier de la Terreur n’est pas dans ce tableau : sa figurine représente des personnages
+         différents selon les quêtes, qui donnent leurs propres caractéristiques.</p>
       <p class="discret petit">Les nouvelles valeurs s’appliquent aux quêtes commencées ensuite.
-         Pour une quête en cours, corrigez les points de Corps depuis la fiche du héros.</p>
+         Pour une quête en cours, corrigez les points de Vie depuis la fiche du héros.</p>
     </section>`;
 }
 
@@ -450,7 +452,7 @@ function brancherCaracs(caracs) {
     else { caracs[famille][type][champ] = n; inp.value = n; }
     await Stockage.ecrireReglage('caracteristiques', caracs);
     const reste = [...Regles.TYPES_HEROS.map(t => Regles.manquantes(caracs, 'heros', t.id).length),
-      ...Regles.TYPES_MONSTRES.map(t => Regles.manquantes(caracs, 'monstres', t.id).length)].reduce((a, b) => a + b, 0);
+      ...Regles.TYPES_MONSTRES_REGLES.map(t => Regles.manquantes(caracs, 'monstres', t.id).length)].reduce((a, b) => a + b, 0);
     const etat = $('#etat-caracs');
     etat.textContent = reste ? `Enregistré. ${reste} valeur(s) à remplir.` : 'Enregistré. Toutes les valeurs sont remplies.';
     etat.className = 'petit ' + (reste ? 'erreur' : 'succes');

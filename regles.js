@@ -19,12 +19,14 @@ const Regles = (() => {
     { id: 'gobelin', nom: 'Gobelin', court: 'Go' },
     { id: 'orque', nom: 'Orque', court: 'Or' },
     { id: 'abomination', nom: 'Abomination', court: 'Ab' },
-    { id: 'guerrierEffroi', nom: 'Guerrier de l’Effroi', court: 'GE' },
+    { id: 'guerrierEffroi', nom: 'Guerrier de la Terreur', court: 'GT' },
     { id: 'gargouille', nom: 'Gargouille', court: 'Ga' },
     { id: 'squelette', nom: 'Squelette', court: 'Sq' },
     { id: 'zombie', nom: 'Zombie', court: 'Zo' },
     { id: 'momie', nom: 'Momie', court: 'Mo' },
-    { id: 'sorcierEffroi', nom: 'Sorcier de l’Effroi', court: 'SE' },
+    // Le sorcier est une figurine qui représente différents personnages selon les quêtes :
+    // pas de caractéristiques communes dans les Réglages ; la quête les donne pour chaque figurine.
+    { id: 'sorcierEffroi', nom: 'Sorcier de la Terreur', court: 'ST', variable: true },
   ];
   const infoMonstre = type => TYPES_MONSTRES.find(t => t.id === type) || { id: type, nom: type, court: String(type).slice(0, 2) };
 
@@ -32,14 +34,14 @@ const Regles = (() => {
   const CHAMPS_HEROS = [
     { id: 'attaque', nom: 'Dés d’attaque' },
     { id: 'defense', nom: 'Dés de défense' },
-    { id: 'corps', nom: 'Points de Corps' },
+    { id: 'corps', nom: 'Points de Vie' },
     { id: 'esprit', nom: 'Points d’Esprit' },
   ];
   const CHAMPS_MONSTRES = [
     { id: 'deplacement', nom: 'Déplacement (cases)' },
     { id: 'attaque', nom: 'Dés d’attaque' },
     { id: 'defense', nom: 'Dés de défense' },
-    { id: 'corps', nom: 'Points de Corps' },
+    { id: 'corps', nom: 'Points de Vie' },
     { id: 'esprit', nom: 'Points d’Esprit' },
   ];
 
@@ -67,10 +69,13 @@ const Regles = (() => {
 
   /* ---------- Caractéristiques saisies ---------- */
 
+  // Types de monstres dont les caractéristiques se règlent une fois pour toutes (Réglages).
+  const TYPES_MONSTRES_REGLES = TYPES_MONSTRES.filter(t => !t.variable);
+
   function caracsVides() {
     return {
       heros: Object.fromEntries(TYPES_HEROS.map(t => [t.id, {}])),
-      monstres: Object.fromEntries(TYPES_MONSTRES.map(t => [t.id, {}])),
+      monstres: Object.fromEntries(TYPES_MONSTRES_REGLES.map(t => [t.id, {}])),
     };
   }
 
@@ -80,11 +85,18 @@ const Regles = (() => {
     return Number.isFinite(v) ? v : null;
   }
 
+  // Caractéristique d'UN monstre : celle donnée par la quête pour cette figurine
+  // (champ « caracs »), sinon celle de son type dans les Réglages.
+  function valeurMonstre(caracs, monstre, champ) {
+    const v = monstre?.caracs?.[champ];
+    return Number.isFinite(v) ? v : valeur(caracs, 'monstres', monstre.type, champ);
+  }
+
   // Liste lisible des valeurs manquantes pour un type (vide = complet).
   function manquantes(caracs, famille, type) {
     const champs = famille === 'heros' ? CHAMPS_HEROS : CHAMPS_MONSTRES;
     return champs.filter(c => valeur(caracs, famille, type, c.id) === null).map(c => c.nom);
   }
 
-  return { TYPES_HEROS, TYPES_MONSTRES, infoMonstre, CHAMPS_HEROS, CHAMPS_MONSTRES, lancer, compter, afficher, caracsVides, valeur, manquantes };
+  return { TYPES_HEROS, TYPES_MONSTRES, TYPES_MONSTRES_REGLES, valeurMonstre, infoMonstre, CHAMPS_HEROS, CHAMPS_MONSTRES, lancer, compter, afficher, caracsVides, valeur, manquantes };
 })();
