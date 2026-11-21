@@ -106,6 +106,7 @@ const VuePlateau = (() => {
             <ul class="puces petit">
               <li>Le héros dont c’est le tour porte un anneau blanc. « Se déplacer » : lancez vos 2 dés rouges, touchez le total,
                   puis touchez les cases une par une (les cases possibles sont encadrées).</li>
+              <li>Fiche d’un héros (points de Vie, d’Esprit, dés) : touchez son pion sur le plateau, ou sa pastille dans l’ordre de jeu en haut.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
@@ -335,10 +336,8 @@ const VuePlateau = (() => {
       }
       // Pendant un déplacement, toucher une case fait avancer le héros actif.
       if (c && etat.tour?.deplacement) return avancer(c);
-      if (heros) {
-        const h = etat.heros.find(k => k.id === heros.dataset.heros);
-        return msg(h.id === herosActif()?.id ? `C’est au tour de ${h.nom}.` : `${h.nom} — ce n’est pas son tour.`);
-      }
+      // Toucher le pion d'un héros (hors déplacement) ouvre sa fiche.
+      if (heros) return ouvrirFiche(heros.dataset.heros);
       if (!c) return;
       const m = etat.monstres.find(k => k.x === c.x && k.y === c.y);
       if (m && etat.revele.includes(Plateau.idx(L, c.x, c.y))) msg(`${infoMonstre(m.type).nom} — Vie ${m.corps ?? '?'}${m.corpsMax ? '/' + m.corpsMax : ''}.`);
