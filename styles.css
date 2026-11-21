@@ -395,3 +395,11 @@ table.caracs.petite { margin-top: 8px; }
 .inventaire li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; background: #1f1a14; border: 1px solid var(--bord); border-radius: 8px; }
 button.petit-bouton { min-width: 40px; min-height: 40px; font-size: 1rem; }
 .fiche h3 { margin: 14px 0 6px; font-size: 1rem; color: var(--or); }
+
+/* ---------- Fenêtre « Actions » (v0.12.0) ---------- */
+.carte-modale { position: relative; }
+.fermer-modale { position: absolute; top: 10px; right: 10px; }
+.carte-modale .etat-tour { margin: 6px 0 2px; color: var(--discret); }
+.carte-modale .titre-section { margin: 14px 0 4px; font-size: 0.95rem; color: var(--or); text-transform: uppercase; letter-spacing: 0.06em; }
+.carte-modale .choix button { min-width: 180px; }
+.carte-modale .choix.nombres button { min-width: 52px; }

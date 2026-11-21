@@ -110,8 +110,9 @@ const VuePlateau = (() => {
           <section>
             <h3>Comment ça marche</h3>
             <ul class="puces petit">
-              <li>Le héros dont c’est le tour porte un anneau blanc. « Se déplacer » : lancez vos 2 dés rouges, touchez le total,
-                  puis touchez les cases une par une (les cases possibles sont encadrées).</li>
+              <li>Le héros dont c’est le tour porte un anneau blanc. « Actions » ouvre la fenêtre de ses choix :
+                  « Se déplacer » (lancez vos 2 dés rouges, touchez le total, puis les cases une par une — les cases possibles
+                  sont encadrées), « Terminer le déplacement », « Attaquer »… La croix ✕ la referme.</li>
               <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : touchez son pion sur le plateau, ou sa pastille dans l’ordre de jeu en haut.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
@@ -184,7 +185,7 @@ const VuePlateau = (() => {
       if (!historique.length) return;
       etat = JSON.parse(historique.pop());
       partie.etat = etat;
-      selection = null; combat = null; conclusion = null; ciblage = false;
+      selection = null; combat = null; conclusion = null; ciblage = false; fenetreActions = null;
       enregistrer();
       msg('Action annulée.');
       dessiner();
@@ -447,7 +448,7 @@ const VuePlateau = (() => {
 
       conteneur.querySelectorAll('[data-fiche]').forEach(b => b.addEventListener('click', () => ouvrirFiche(b.dataset.fiche)));
       const p = conteneur.querySelector('#pl-tour');
-      conteneur.querySelector('#pl-haut').classList.toggle('saisie', (saisieDes || ciblage) && !vueMJ);
+      conteneur.querySelector('#pl-haut').classList.toggle('saisie', ciblage && !vueMJ);
       if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
       let html = `<span class="titre-tour">T${t.numero} · `;
       if (!actif) {
@@ -463,39 +464,26 @@ const VuePlateau = (() => {
         html += `<strong>${actif.nom}</strong></span>
           <span>Touchez le monstre à attaquer.</span>
           <button id="tr-retour-attaque">Retour</button>`;
-      } else if (saisieDes) {
-        html += `<strong>${actif.nom}</strong></span>
-          <span>Total des dés :</span>
-          <div class="des">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => `<button data-total="${n}">${n}</button>`).join('')}</div>
-          <button id="tr-annuler-des">Retour</button>`;
-      } else if (t.deplacement) {
-        html += `<strong>${actif.nom}</strong></span>
-          <span class="compteur" title="cases restantes">${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''}</span>
-          <button id="tr-fin-depl">Terminer</button>
-          <button id="tr-attaquer">Attaquer</button>
-          <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       } else {
+        // Bandeau réduit : les choix détaillés sont dans la fenêtre « Actions ».
         html += `<strong>${actif.nom}</strong></span>
-          <button id="tr-depl">${t.aBouge ? 'Se déplacer encore' : 'Se déplacer'}</button>
-          <button id="tr-attaquer">Attaquer</button>
+          ${t.deplacement ? `<span class="compteur" title="cases restantes">${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''}</span>` : ''}
+          <button id="tr-actions">Actions / Déplacement</button>
           <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       }
       p.innerHTML = html;
       const sur = (sel, f) => p.querySelector(sel)?.addEventListener('click', f);
-      sur('#tr-depl', commencerDeplacement);
-      sur('#tr-annuler-des', () => { saisieDes = false; msg(''); dessiner(); });
-      p.querySelectorAll('[data-total]').forEach(b => b.addEventListener('click', () => choisirTotal(+b.dataset.total)));
-      sur('#tr-fin-depl', terminerDeplacement);
+      sur('#tr-actions', () => { fenetreActions = 'menu'; dessiner(); });
       sur('#tr-fin-tour', finDuTour);
       sur('#tr-fin-zargon', finTourZargon);
-      sur('#tr-attaquer', commencerAttaque);
       sur('#tr-retour-attaque', () => { ciblage = false; msg(''); dessiner(); });
     }
 
-    let saisieDes = false; // le panneau affiche les boutons 2 à 12
+    // Fenêtre « Actions » du héros actif : null (fermée), 'menu' (choix) ou 'des' (total des dés).
+    let fenetreActions = null;
 
     function commencerDeplacement() {
-      saisieDes = true; ciblage = false; combat = null; conclusion = null;
+      fenetreActions = 'des'; ciblage = false; combat = null; conclusion = null;
       const actif = herosActif();
       // Écart n° 1 : un seul déplacement par tour. On avertit, on ne bloque pas.
       msg(etat.tour.aBouge
@@ -505,7 +493,7 @@ const VuePlateau = (() => {
     }
 
     function choisirTotal(n) {
-      saisieDes = false;
+      fenetreActions = null;
       modifier(e => { e.tour.deplacement = { total: n, restant: n }; e.tour.aBouge = true; });
       msg(`${herosActif().nom} peut avancer de ${n} cases : touchez les cases une par une.`);
     }
@@ -531,6 +519,7 @@ const VuePlateau = (() => {
       const actif = herosActif();
       const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
       if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
+      fenetreActions = null;
       modifier(e => { e.tour.deplacement = null; });
       msg(`${actif.nom} s’arrête.`);
     }
@@ -541,7 +530,7 @@ const VuePlateau = (() => {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
-      saisieDes = false; ciblage = false; combat = null; conclusion = null;
+      fenetreActions = null; ciblage = false; combat = null; conclusion = null;
       modifier(e => {
         e.tour = { numero: e.tour.numero, index: e.tour.index + 1 };
         if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
@@ -564,7 +553,7 @@ const VuePlateau = (() => {
 
     function porteProposee() {
       const h = herosActif();
-      if (!h || vueMJ || saisieDes || ciblage || combat || conclusion) return null;
+      if (!h || vueMJ || fenetreActions || ciblage || combat || conclusion) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
@@ -738,7 +727,7 @@ const VuePlateau = (() => {
       const cibles = ciblesAttaque();
       if (!cibles.length) return msg('Aucun monstre à portée : il faut un monstre visible sur une case voisine (sans diagonale).');
       if ((etat.tour.actions || 0) >= 1) msg(`⚠ ${h.nom} a déjà fait une action ce tour-ci (règle : une seule action par tour). Vous pouvez continuer.`);
-      saisieDes = false;
+      fenetreActions = null;
       // Un seul monstre à portée : le duel s'ouvre directement.
       if (cibles.length === 1) return choisirCible(cibles[0].id);
       ciblage = true;
@@ -912,6 +901,37 @@ const VuePlateau = (() => {
           </div>`;
       }
 
+      else if (fenetreActions && herosActif()) {
+        // Fenêtre « Actions » : médaillon du héros, état du tour, choix possibles.
+        const h = herosActif(), t = etat.tour;
+        const cibles = ciblesAttaque();
+        const fait = (t.actions || 0) >= 1;
+        const entete = `<button class="icone fermer-modale" id="md-fermer" aria-label="Fermer">✕</button>
+          <div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}</div>`;
+        if (fenetreActions === 'des') {
+          html = `${entete}
+            <p class="question">${t.aBouge ? `⚠ ${h.nom} s’est déjà déplacé ce tour-ci. ` : ''}Lancez les 2 dés rouges : quel total ?</p>
+            <div class="choix nombres">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => `<button data-total="${n}">${n}</button>`).join('')}</div>
+            <div class="choix"><button id="md-retour-actions">Retour</button></div>`;
+        } else {
+          html = `${entete}
+            <p class="etat-tour">Déplacement : ${t.deplacement ? `<strong>en cours (${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''})</strong>` : t.aBouge ? 'fait' : 'disponible'}
+              · Action : ${fait ? 'faite' : 'disponible'}</p>
+            <h3 class="titre-section">Déplacement</h3>
+            <div class="choix">
+              ${t.deplacement
+                ? '<button id="md-terminer-depl">Terminer le déplacement</button>'
+                : `<button id="md-deplacer" class="${t.aBouge ? '' : 'principal'}">${t.aBouge ? 'Se déplacer encore ⚠' : 'Se déplacer'}</button>`}
+            </div>
+            <h3 class="titre-section">Actions</h3>
+            <div class="choix">
+              ${cibles.length ? `<button id="md-attaquer" class="${fait ? '' : 'principal'}">Attaquer${fait ? ' ⚠' : ''}</button>` : ''}
+            </div>
+            ${cibles.length ? '' : '<p class="discret petit">Aucune action possible ici pour l’instant (pas de monstre au contact). Fouilles et sorts arriveront aux prochaines étapes.</p>'}
+            <div class="choix"><button id="md-fiche">Fiche de ${echapperTexte(h.nom)}</button></div>`;
+        }
+      }
+
       if (!html) return fermer();
       boite.innerHTML = `<div class="carte-modale">${html}</div>`;
       boite.hidden = false;
@@ -920,6 +940,13 @@ const VuePlateau = (() => {
       sur('#md-passer', passerMonstre);
       sur('#md-suivant', () => { conclusion = null; dessiner(); });
       sur('#md-annuler-combat', () => { combat = null; dessiner(); });
+      sur('#md-fermer', () => { fenetreActions = null; dessiner(); });
+      sur('#md-deplacer', commencerDeplacement);
+      sur('#md-retour-actions', () => { fenetreActions = 'menu'; msg(''); dessiner(); });
+      sur('#md-terminer-depl', terminerDeplacement);
+      sur('#md-attaquer', () => { fenetreActions = null; commencerAttaque(); });
+      sur('#md-fiche', () => { fenetreActions = null; dessiner(); ouvrirFiche(herosActif().id); });
+      boite.querySelectorAll('[data-total]').forEach(b => b.addEventListener('click', () => choisirTotal(+b.dataset.total)));
       boite.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
       boite.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
       animerDes(boite);
