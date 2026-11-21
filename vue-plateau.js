@@ -868,7 +868,9 @@ const VuePlateau = (() => {
     function casesApresBloc(ev) {
       const p = etat.pieges.find(q => q.id === ev.piege);
       const h = herosActif();
-      const libre = ([x, y]) => x >= 0 && y >= 0 && x < L && y < H && !Plateau.raisonBlocage(g, etat, p.x, p.y, x, y) && !Plateau.autreHerosEn(etat, h.id, x, y);
+      // On évalue le passage comme si le bloc n'était pas encore là (le héros en sort).
+      const sansBloc = { ...etat, pieges: etat.pieges.filter(q => q.id !== p.id) };
+      const libre = ([x, y]) => x >= 0 && y >= 0 && x < L && y < H && !Plateau.raisonBlocage(g, sansBloc, p.x, p.y, x, y) && !Plateau.autreHerosEn(etat, h.id, x, y);
       const avant = [p.x + ev.dir[0], p.y + ev.dir[1]];
       const choix = [];
       if (libre(avant)) choix.push({ nom: 'En avant', c: avant });
