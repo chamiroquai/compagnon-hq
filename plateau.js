@@ -190,6 +190,38 @@ const Plateau = (() => {
     return etat.heros.find(h => h.x != null && [p.a, p.b].some(([x, y]) => h.x === x && h.y === y));
   }
 
+  /* ---------- Déplacement des héros ---------- */
+
+  // Meuble présent sur la case (x, y), ou undefined.
+  function meubleEn(g, x, y) {
+    return (g.quete.mobilier || []).find(m => x >= m.x && x < m.x + (m.l || 1) && y >= m.y && y < m.y + (m.h || 1));
+  }
+
+  // Un héros peut-il avancer d'une case, de (x, y) vers (nx, ny) ?
+  // Renvoie null si oui, sinon la raison en français.
+  // Règles : une case à la fois, pas de diagonale ; pas à travers les murs ni les
+  // portes fermées (on entre dans une pièce par une porte) ; pas à travers un monstre
+  // ou un meuble ; on peut traverser un autre héros (mais pas s'arrêter sur sa case).
+  function raisonBlocage(g, etat, x, y, nx, ny) {
+    if (!dansPlateau(g, nx, ny)) return 'Hors du plateau.';
+    if (Math.abs(nx - x) + Math.abs(ny - y) !== 1) return 'Une case à la fois, sans diagonale : touchez une case voisine du héros.';
+    const i = idx(g.L, x, y), j = idx(g.L, nx, ny);
+    if (g.zones[j] === '#') return 'Roche : impossible de passer.';
+    if (!ouvert(g, etat, i, j)) {
+      const p = g.portesParBord[bord(i, j)];
+      return p && porteVisible(etat, p) ? 'La porte est fermée : ouvrez-la d’abord.' : 'Un mur bloque le passage.';
+    }
+    if (etat.monstres.some(m => m.x === nx && m.y === ny)) return 'Un monstre bloque le passage.';
+    const meuble = meubleEn(g, nx, ny);
+    if (meuble) return `${meuble.nom} : on ne peut pas passer par-dessus.`;
+    return null;
+  }
+
+  // Autre héros sur la case (x, y) ?
+  function autreHerosEn(etat, idHeros, x, y) {
+    return etat.heros.find(h => h.id !== idHeros && h.x === x && h.y === y);
+  }
+
   /* ---------- Réglages de vision ---------- */
 
   // Portée de vue dans les couloirs, d'après les réglages de la partie.
@@ -266,5 +298,5 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, HEROS };
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, HEROS };
 })();

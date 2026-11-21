@@ -1,7 +1,9 @@
 /* vue-plateau.js — Dessin du plateau (SVG) et gestes du joueur.
-   Étape 3 : affichage, brouillard, portes, vue MJ, annulation.
-   Le déplacement est LIBRE pour l'instant (pour tester le brouillard) :
-   les dés et le déplacement case par case arrivent à l'étape 4. */
+   Affichage, brouillard, portes, vue MJ, annulation (étape 3) ;
+   tour par tour et déplacement case par case aux dés (étape 4).
+   Règle d'arbitrage : en cas d'écart aux règles (2e déplacement…), l'application
+   AVERTIT mais ne bloque pas. Seules les impossibilités physiques sont refusées
+   (traverser un mur, un monstre, un meuble…). La vue MJ permet toutes les corrections. */
 'use strict';
 
 const VuePlateau = (() => {
@@ -36,6 +38,7 @@ const VuePlateau = (() => {
     const g = Plateau.geometrie(quete);
     const { L, H } = g;
     let etat = partie.etat;
+    if (!etat.tour) etat.tour = { numero: 1, index: 0 }; // parties commencées avant la v0.5.0
     let selection = null;        // id du héros sélectionné
     let vueMJ = false;
     let zoom = Number(localStorage.getItem('zoomPlateau')) || 1;
@@ -43,10 +46,7 @@ const VuePlateau = (() => {
 
     const nomHeros = hid => etat.heros.find(h => h.id === hid)?.nom ?? hid;
     conteneur.innerHTML = `
-      <ol class="ordre-jeu" aria-label="Ordre de jeu">
-        ${(etat.ordre || []).map(hid => `<li><span class="pastille h-${hid}"></span>${nomHeros(hid)}</li>`).join('')}
-        <li class="zargon">Zargon</li>
-      </ol>
+      <ol id="pl-ordre" class="ordre-jeu" aria-label="Ordre de jeu"></ol>
       <div class="barre-plateau">
         <button id="pl-annuler" disabled>↶ Annuler</button>
         <button id="pl-mj" aria-pressed="false">Vue MJ</button>
@@ -55,6 +55,7 @@ const VuePlateau = (() => {
         <button id="pl-moins" aria-label="Dézoomer">−</button>
         <button id="pl-plus" aria-label="Zoomer">+</button>
       </div>
+      <div id="pl-tour" class="panneau-tour"></div>
       <div id="pl-reglages" class="reglages-vision" hidden>
         <label for="pl-portee">Portée de vue dans les couloirs</label>
         <select id="pl-portee">
@@ -68,12 +69,15 @@ const VuePlateau = (() => {
       <p id="pl-message" class="message-plateau"></p>
       <div class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
       <details class="aide">
-        <summary>Comment ça marche (étape 3)</summary>
+        <summary>Comment ça marche</summary>
         <ul class="puces petit">
-          <li>Touchez un héros pour le choisir, puis une case pour l’y poser (déplacement libre, temporaire).</li>
+          <li>Le héros dont c’est le tour est entouré d’or. « Se déplacer » : lancez vos 2 dés rouges, touchez le total,
+              puis touchez les cases une par une (les cases possibles sont marquées).</li>
+          <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
           <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
-          <li>Vue MJ : tout le plateau apparaît (le brouillard est assombri). Toucher une case dévoile ou cache sa pièce ;
-              toucher une porte secrète la rend trouvée.</li>
+          <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
+          <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
+              dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
         </ul>
       </details>`;
 
@@ -192,22 +196,37 @@ const VuePlateau = (() => {
         t.textContent = infoMonstre(m.type).court;
       }
 
-      // 7. Héros
+      // 7. Cases où le héros actif peut avancer (pendant un déplacement)
+      const actif = herosActif();
+      if (!vueMJ && actif && etat.tour.deplacement) {
+        const cibles = el('g', { class: 'cibles' }, svg);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = actif.x + dx, ny = actif.y + dy;
+          if (Plateau.raisonBlocage(g, etat, actif.x, actif.y, nx, ny)) continue;
+          if (etat.tour.deplacement.restant === 1 && Plateau.autreHerosEn(etat, actif.id, nx, ny)) continue;
+          el('rect', { x: nx * T + 3, y: ny * T + 3, width: T - 6, height: T - 6, rx: 6 }, cibles);
+        }
+      }
+
+      // 8. Héros
       for (const h of etat.heros) {
         if (h.x == null) continue;
-        const gr = el('g', { class: 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : ''), 'data-heros': h.id }, svg);
+        const cls = 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '');
+        const gr = el('g', { class: cls, 'data-heros': h.id }, svg);
+        // Héros actif : anneau blanc autour du pion, visible quelle que soit sa couleur.
+        if (cls.includes(' actif')) el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 1, class: 'anneau' }, gr);
         el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 4 }, gr);
         const t = el('text', { x: h.x * T + T / 2, y: h.y * T + T / 2 + 5 }, gr);
         t.textContent = h.court;
       }
 
-      // 8. Brouillard
+      // 9. Brouillard
       const brouillard = el('g', { class: 'brouillard' }, svg);
       for (let i = 0; i < L * H; i++) {
         if (!vu.has(i)) el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T + 0.5, height: T + 0.5 }, brouillard);
       }
 
-      // 9. Pénombre : la dernière case vue d'un couloir s'estompe vers le noir,
+      // 10. Pénombre : la dernière case vue d'un couloir s'estompe vers le noir,
       //    dans la direction du regard (dégradé propre à chaque case).
       const defs = el('defs', {}, svg);
       const penombre = el('g', { class: 'penombre' }, svg);
@@ -221,6 +240,7 @@ const VuePlateau = (() => {
         el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T + 0.5, height: T + 0.5, fill: `url(#${id})` }, penombre);
       }
 
+      dessinerTour();
       conteneur.querySelector('#pl-annuler').disabled = historique.length === 0;
       const bMJ = conteneur.querySelector('#pl-mj');
       bMJ.classList.toggle('actif', vueMJ);
@@ -241,32 +261,153 @@ const VuePlateau = (() => {
       const porte = evt.target.closest('[data-porte]');
       const heros = evt.target.closest('[data-heros]');
       if (porte) return toucherPorte(porte.dataset.porte);
-      if (heros && !vueMJ) {
-        selection = selection === heros.dataset.heros ? null : heros.dataset.heros;
-        const h = etat.heros.find(k => k.id === selection);
-        msg(h ? `${h.nom} choisi : touchez une case pour l’y poser.` : '');
-        return dessiner();
-      }
       const c = caseTouchee(evt);
+
+      if (vueMJ) {
+        // Vue MJ : toucher un héros le choisit, puis une case le pose (correction libre).
+        if (heros) {
+          selection = selection === heros.dataset.heros ? null : heros.dataset.heros;
+          const h = etat.heros.find(k => k.id === selection);
+          msg(h ? `${h.nom} choisi : touchez une case pour l’y poser (vue MJ).` : '');
+          return dessiner();
+        }
+        if (!c) return;
+        return selection ? poserHeros(c) : toucherCaseMJ(c);
+      }
+
+      // Vue des joueurs : pendant un déplacement, toucher une case fait avancer le héros actif.
+      if (c && etat.tour?.deplacement) return avancer(c);
+      if (heros) {
+        const h = etat.heros.find(k => k.id === heros.dataset.heros);
+        return msg(h.id === herosActif()?.id ? `C’est au tour de ${h.nom}.` : `${h.nom} — ce n’est pas son tour.`);
+      }
       if (!c) return;
-      if (vueMJ) return toucherCaseMJ(c);
-      if (selection) return poserHeros(c);
       const m = etat.monstres.find(k => k.x === c.x && k.y === c.y);
       if (m && etat.revele.includes(Plateau.idx(L, c.x, c.y))) msg(infoMonstre(m.type).nom + '.');
     });
 
+    // Vue MJ : pose un héros n'importe où (sauf roche, meuble ou case occupée).
     function poserHeros({ x, y }) {
       const i = Plateau.idx(L, x, y);
       const h = etat.heros.find(k => k.id === selection);
       if (g.zones[i] === '#') return msg('Case de roche : impossible.');
-      if (!etat.revele.includes(i)) return msg('Cette case n’est pas encore dévoilée.');
       if (etat.heros.some(k => k.x === x && k.y === y) || etat.monstres.some(k => k.x === x && k.y === y)) return msg('Case occupée.');
-      const meuble = (quete.mobilier || []).find(m => x >= m.x && x < m.x + (m.l || 1) && y >= m.y && y < m.y + (m.h || 1));
+      const meuble = Plateau.meubleEn(g, x, y);
       if (meuble) return msg(`${meuble.nom} : on ne peut pas s’y arrêter.`);
       modifier(e => { const k = e.heros.find(z => z.id === h.id); k.x = x; k.y = y; });
       selection = null;
       msg(`${h.nom} déplacé.`);
       dessiner();
+    }
+
+    /* ---------- Tour par tour ---------- */
+
+    // Héros dont c'est le tour, ou null pendant le tour de Zargon.
+    function herosActif() {
+      const t = etat.tour, ordre = etat.ordre || [];
+      if (!t || t.index >= ordre.length) return null;
+      return etat.heros.find(h => h.id === ordre[t.index]) || null;
+    }
+
+    // Panneau sous la barre : à qui le tour, et les boutons utiles à ce moment.
+    function dessinerTour() {
+      const t = etat.tour || { numero: 1, index: 0 };
+      const ordre = etat.ordre || [];
+      const actif = herosActif();
+      conteneur.querySelector('#pl-ordre').innerHTML =
+        ordre.map((hid, n) => `<li class="${n === t.index ? 'en-cours' : ''}"><span class="pastille h-${hid}"></span>${nomHeros(hid)}</li>`).join('')
+        + `<li class="zargon ${t.index >= ordre.length ? 'en-cours' : ''}">Zargon</li>`;
+
+      const p = conteneur.querySelector('#pl-tour');
+      if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
+      let html = `<span class="titre-tour">Tour ${t.numero} · `;
+      if (!actif) {
+        html += `<strong>Zargon</strong></span>
+          <span class="discret petit">Les monstres agiront ici à l’étape 5.</span>
+          <button id="tr-fin-zargon" class="principal">Fin du tour de Zargon</button>`;
+      } else if (saisieDes) {
+        html += `<strong>${actif.nom}</strong></span>
+          <span>Total des 2 dés rouges :</span>
+          <div class="des">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => `<button data-total="${n}">${n}</button>`).join('')}</div>
+          <button id="tr-annuler-des">Retour</button>`;
+      } else if (t.deplacement) {
+        html += `<strong>${actif.nom}</strong></span>
+          <span class="compteur">${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''} restante${t.deplacement.restant > 1 ? 's' : ''}</span>
+          <button id="tr-fin-depl">Terminer le déplacement</button>
+          <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
+      } else {
+        html += `<strong>${actif.nom}</strong></span>
+          <button id="tr-depl">${t.aBouge ? 'Se déplacer encore' : 'Se déplacer'}</button>
+          <button id="tr-fin-tour" class="principal">Fin du tour de ${actif.nom}</button>`;
+      }
+      p.innerHTML = html;
+      const sur = (sel, f) => p.querySelector(sel)?.addEventListener('click', f);
+      sur('#tr-depl', commencerDeplacement);
+      sur('#tr-annuler-des', () => { saisieDes = false; msg(''); dessiner(); });
+      p.querySelectorAll('[data-total]').forEach(b => b.addEventListener('click', () => choisirTotal(+b.dataset.total)));
+      sur('#tr-fin-depl', terminerDeplacement);
+      sur('#tr-fin-tour', finDuTour);
+      sur('#tr-fin-zargon', finTourZargon);
+    }
+
+    let saisieDes = false; // le panneau affiche les boutons 2 à 12
+
+    function commencerDeplacement() {
+      saisieDes = true;
+      const actif = herosActif();
+      // Écart n° 1 : un seul déplacement par tour. On avertit, on ne bloque pas.
+      msg(etat.tour.aBouge
+        ? `⚠ ${actif.nom} s’est déjà déplacé ce tour-ci (règle : un seul déplacement par tour). Vous pouvez continuer.`
+        : `Lancez les 2 dés rouges pour ${actif.nom}, puis touchez le total.`);
+      dessiner();
+    }
+
+    function choisirTotal(n) {
+      saisieDes = false;
+      modifier(e => { e.tour.deplacement = { total: n, restant: n }; e.tour.aBouge = true; });
+      msg(`${herosActif().nom} peut avancer de ${n} cases : touchez les cases une par une.`);
+    }
+
+    function avancer({ x, y }) {
+      const actif = herosActif();
+      const raison = Plateau.raisonBlocage(g, etat, actif.x, actif.y, x, y);
+      if (raison) return msg(raison);
+      const surHeros = Plateau.autreHerosEn(etat, actif.id, x, y);
+      if (surHeros && etat.tour.deplacement.restant === 1)
+        return msg(`Dernière case : on ne peut pas s’arrêter sur la case de ${surHeros.nom}.`);
+      modifier(e => {
+        const h = e.heros.find(k => k.id === actif.id);
+        h.x = x; h.y = y;
+        e.tour.deplacement.restant -= 1;
+        if (e.tour.deplacement.restant <= 0) e.tour.deplacement = null;
+      });
+      msg(etat.tour.deplacement ? (surHeros ? `${actif.nom} passe la case de ${surHeros.nom}.` : '') : `${actif.nom} a utilisé tout son déplacement.`);
+    }
+
+    // Arrêter le déplacement avant d'avoir tout utilisé (permis par les règles).
+    function terminerDeplacement() {
+      const actif = herosActif();
+      const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
+      if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
+      modifier(e => { e.tour.deplacement = null; });
+      msg(`${actif.nom} s’arrête.`);
+    }
+
+    function finDuTour() {
+      const actif = herosActif();
+      if (etat.tour.deplacement) {
+        const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
+        if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
+      }
+      saisieDes = false;
+      modifier(e => { e.tour = { numero: e.tour.numero, index: e.tour.index + 1 }; });
+      const suivant = herosActif();
+      msg(suivant ? `À ${suivant.nom} de jouer.` : 'Au tour de Zargon.');
+    }
+
+    function finTourZargon() {
+      modifier(e => { e.tour = { numero: e.tour.numero + 1, index: 0 }; });
+      msg(`Tour ${etat.tour.numero} : à ${herosActif()?.nom ?? '?'} de jouer.`);
     }
 
     function toucherPorte(id) {
