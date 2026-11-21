@@ -156,3 +156,9 @@ textarea { resize: vertical; }
 /* Brouillard : noir pour les joueurs, assombri en vue MJ */
 .brouillard rect { fill: #000; pointer-events: none; }
 svg.mj .brouillard rect { fill-opacity: 0.55; }
+
+/* Réglage de la vision */
+.reglages-vision { margin-top: 10px; padding: 10px 12px; background: #1f1a14; border: 1px solid var(--bord); border-radius: 10px; }
+.reglages-vision label { display: block; margin-bottom: 6px; }
+.reglages-vision select { min-height: 44px; font: inherit; color: var(--texte); background: #3a3226; border: 1px solid var(--bord); border-radius: 8px; padding: 0 10px; margin-bottom: 8px; }
+.penombre rect { pointer-events: none; }

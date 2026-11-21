@@ -94,23 +94,44 @@ const Plateau = (() => {
   // Ajoute à etat.revele tout ce que les héros voient maintenant. Ce qui a été
   // dévoilé le reste. Renvoie le nombre de cases nouvellement dévoilées.
   // - héros dans une pièce : toute la pièce ;
-  // - héros dans un couloir : les cases de couloir en ligne de vue ;
+  // - héros dans un couloir : les cases de couloir en ligne de vue,
+  //   jusqu'à « portee » cases de distance (règle maison ; Infinity = règle officielle) ;
   // - porte ouverte : les pièces des deux côtés ;
-  // - la roche qui touche un couloir dévoilé est montrée, pour voir la forme des couloirs.
-  function devoiler(g, etat) {
+  // - la roche qui touche un couloir bien vu est montrée, pour voir la forme des couloirs.
+  //
+  // Pénombre (règle maison) : la dernière case vue dans un couloir (distance comprise
+  // entre portee − 1 et portee) n'est qu'entrevue. Elle est notée dans etat.penombre
+  // avec la direction du regard (du héros vers la case), pour dessiner un fondu vers le noir.
+  // Si un héros la voit ensuite de plus près, elle redevient une case bien vue.
+  function devoiler(g, etat, portee = Infinity) {
     const vu = new Set(etat.revele);
     const avant = vu.size;
-    const ajouterPiece = z => (g.pieces[z] || []).forEach(i => vu.add(i));
+    const penombre = { ...(etat.penombre || {}) };
+    const bienVu = i => { vu.add(i); delete penombre[i]; };
+    const ajouterPiece = z => (g.pieces[z] || []).forEach(bienVu);
+    const fondu = {}; // cases entrevues pendant ce calcul : case → [dx, dy, distance]
 
     for (const h of etat.heros) {
       if (h.x == null) continue;
       const i = idx(g.L, h.x, h.y), z = g.zones[i];
-      vu.add(i);
+      bienVu(i);
       if (estPiece(z)) { ajouterPiece(z); continue; }
       g.zones.forEach((zc, c) => {
-        if (zc !== '.' || vu.has(c)) return;
-        if (ligneDeVue(g, etat, h.x, h.y, c % g.L, Math.floor(c / g.L))) vu.add(c);
+        if (zc !== '.' || (vu.has(c) && !(c in penombre))) return;
+        const cx = c % g.L, cy = Math.floor(c / g.L);
+        const d = Math.hypot(cx - h.x, cy - h.y);
+        if (d > portee + 1e-9) return;
+        if (!ligneDeVue(g, etat, h.x, h.y, cx, cy)) return;
+        if (d > portee - 1 + 1e-9) {
+          // Case au bord de la vue : garder la vue la plus proche si plusieurs héros l'entrevoient.
+          if (!fondu[c] || d < fondu[c][2]) fondu[c] = [(cx - h.x) / d, (cy - h.y) / d, d];
+        } else bienVu(c);
       });
+    }
+    for (const [c, [dx, dy]] of Object.entries(fondu)) {
+      if (vu.has(+c) && !(c in penombre)) continue; // déjà bien vue par un autre héros
+      vu.add(+c);
+      penombre[c] = [Math.round(dx * 100) / 100, Math.round(dy * 100) / 100];
     }
 
     for (const id of etat.portesOuvertes) {
@@ -118,13 +139,13 @@ const Plateau = (() => {
       if (!p) continue;
       for (const [x, y] of [p.a, p.b]) {
         const z = g.zones[idx(g.L, x, y)];
-        if (estPiece(z)) ajouterPiece(z); else vu.add(idx(g.L, x, y));
+        if (estPiece(z)) ajouterPiece(z); else if (!vu.has(idx(g.L, x, y))) bienVu(idx(g.L, x, y));
       }
     }
 
-    // Roche voisine d'un couloir dévoilé.
+    // Roche voisine d'un couloir bien vu.
     for (const i of [...vu]) {
-      if (g.zones[i] !== '.') continue;
+      if (g.zones[i] !== '.' || i in penombre) continue;
       const x = i % g.L, y = Math.floor(i / g.L);
       for (const [vx, vy] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + 1, y + 1], [x - 1, y - 1], [x + 1, y - 1], [x - 1, y + 1]]) {
         if (dansPlateau(g, vx, vy) && g.zones[idx(g.L, vx, vy)] === '#') vu.add(idx(g.L, vx, vy));
@@ -132,17 +153,21 @@ const Plateau = (() => {
     }
 
     etat.revele = [...vu].sort((a, b) => a - b);
+    etat.penombre = penombre;
     return vu.size - avant;
   }
 
   // Dévoile ou cache à la main (vue MJ) : la pièce entière, ou la case de couloir / roche.
+  // Une case dévoilée par le MJ est bien vue (pas de pénombre).
   function basculerZone(g, etat, x, y) {
     const i = idx(g.L, x, y), z = g.zones[i];
     const cases = estPiece(z) ? g.pieces[z] : [i];
     const vu = new Set(etat.revele);
-    const cacher = vu.has(i);
-    cases.forEach(c => (cacher ? vu.delete(c) : vu.add(c)));
+    const penombre = { ...(etat.penombre || {}) };
+    const cacher = vu.has(i) && !(i in penombre);
+    cases.forEach(c => { delete penombre[c]; cacher ? vu.delete(c) : vu.add(c); });
     etat.revele = [...vu].sort((a, b) => a - b);
+    etat.penombre = penombre;
     return !cacher;
   }
 
@@ -158,6 +183,16 @@ const Plateau = (() => {
     return etat.heros.find(h => h.x != null && [p.a, p.b].some(([x, y]) => h.x === x && h.y === y));
   }
 
+  /* ---------- Réglages de vision ---------- */
+
+  // Portée de vue dans les couloirs, d'après les réglages de la partie.
+  // 'illimitee' = règle officielle ; sinon un nombre de cases (8 par défaut).
+  const PORTEE_DEFAUT = 8;
+  function porteeDe(reglages) {
+    const v = reglages?.porteeCouloir ?? PORTEE_DEFAUT;
+    return v === 'illimitee' ? Infinity : (Number(v) || PORTEE_DEFAUT);
+  }
+
   /* ---------- Début de partie ---------- */
 
   const HEROS = [
@@ -167,20 +202,21 @@ const Plateau = (() => {
     { id: 'enchanteur', nom: 'Enchanteur', court: 'En' },
   ];
 
-  function etatInitial(quete) {
+  function etatInitial(quete, portee = Infinity) {
     const etat = {
       heros: HEROS.map((h, n) => ({ ...h, x: quete.departs[n]?.[0] ?? null, y: quete.departs[n]?.[1] ?? null })),
       monstres: (quete.monstres || []).map(m => ({ ...m })),
       portesOuvertes: [],
       secretesTrouvees: [],
       revele: [],
+      penombre: {},
     };
     // L'escalier est toujours visible.
     if (quete.escalier) {
       const L = quete.plateau.largeur, { x, y } = quete.escalier;
       etat.revele.push(idx(L, x, y), idx(L, x + 1, y), idx(L, x, y + 1), idx(L, x + 1, y + 1));
     }
-    devoiler(geometrie(quete), etat);
+    devoiler(geometrie(quete), etat, portee);
     return etat;
   }
 
@@ -223,5 +259,5 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, HEROS };
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, HEROS };
 })();

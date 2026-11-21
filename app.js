@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.2.0';
+const VERSION_APP = '0.3.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -140,7 +140,8 @@ async function afficherPartie(id) {
     $('#btn-demo').addEventListener('click', async () => {
       // Copie de la quête dans la partie : la partie reste lisible même si la quête change plus tard.
       partie.quete = JSON.parse(JSON.stringify(QUETE_DEMO));
-      partie.etat = Plateau.etatInitial(partie.quete);
+      partie.reglages = { porteeCouloir: Plateau.PORTEE_DEFAUT, ...(partie.reglages || {}) };
+      partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages));
       await enregistrerPartie();
       afficherPartie(id);
     });

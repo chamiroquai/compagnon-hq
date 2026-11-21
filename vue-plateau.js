@@ -45,9 +45,20 @@ const VuePlateau = (() => {
       <div class="barre-plateau">
         <button id="pl-annuler" disabled>↶ Annuler</button>
         <button id="pl-mj" aria-pressed="false">Vue MJ</button>
+        <button id="pl-vision" aria-expanded="false">Vision</button>
         <span class="espace"></span>
         <button id="pl-moins" aria-label="Dézoomer">−</button>
         <button id="pl-plus" aria-label="Zoomer">+</button>
+      </div>
+      <div id="pl-reglages" class="reglages-vision" hidden>
+        <label for="pl-portee">Portée de vue dans les couloirs</label>
+        <select id="pl-portee">
+          <option value="illimitee">Illimitée (règle officielle)</option>
+          ${[4, 5, 6, 7, 8, 10, 12].map(n => `<option value="${n}">${n} cases</option>`).join('')}
+        </select>
+        <p class="discret petit">Règle maison : au-delà, le couloir reste dans le noir ; la dernière case vue
+          s’estompe en fondu. Les pièces sont toujours vues en entier. Réduire la portée ne recache pas
+          ce qui a déjà été vu.</p>
       </div>
       <p id="pl-message" class="message-plateau"></p>
       <div class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
@@ -79,7 +90,7 @@ const VuePlateau = (() => {
       if (resultat === false) return; // action refusée : rien n'a changé
       historique.push(avant);
       if (historique.length > 60) historique.shift();
-      Plateau.devoiler(g, etat);
+      Plateau.devoiler(g, etat, Plateau.porteeDe(partie.reglages));
       partie.etat = etat;
       enregistrer();
       dessiner();
@@ -191,6 +202,20 @@ const VuePlateau = (() => {
         if (!vu.has(i)) el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T + 0.5, height: T + 0.5 }, brouillard);
       }
 
+      // 9. Pénombre : la dernière case vue d'un couloir s'estompe vers le noir,
+      //    dans la direction du regard (dégradé propre à chaque case).
+      const defs = el('defs', {}, svg);
+      const penombre = el('g', { class: 'penombre' }, svg);
+      for (const [c, [dx, dy]] of Object.entries(etat.penombre || {})) {
+        const i = +c;
+        if (!vu.has(i)) continue;
+        const id = 'fondu-' + i;
+        const grad = el('linearGradient', { id, x1: 0.5 - dx / 2, y1: 0.5 - dy / 2, x2: 0.5 + dx / 2, y2: 0.5 + dy / 2 }, defs);
+        el('stop', { offset: 0, 'stop-color': '#000', 'stop-opacity': 0.1 }, grad);
+        el('stop', { offset: 1, 'stop-color': '#000', 'stop-opacity': vueMJ ? 0.6 : 0.97 }, grad);
+        el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T + 0.5, height: T + 0.5, fill: `url(#${id})` }, penombre);
+      }
+
       conteneur.querySelector('#pl-annuler').disabled = historique.length === 0;
       const bMJ = conteneur.querySelector('#pl-mj');
       bMJ.classList.toggle('actif', vueMJ);
@@ -272,6 +297,23 @@ const VuePlateau = (() => {
     }
 
     conteneur.querySelector('#pl-annuler').addEventListener('click', annuler);
+
+    // Réglage de la portée de vue (enregistré dans la partie).
+    const choixPortee = conteneur.querySelector('#pl-portee');
+    const valeurPortee = partie.reglages?.porteeCouloir ?? Plateau.PORTEE_DEFAUT;
+    choixPortee.value = String(valeurPortee);
+    conteneur.querySelector('#pl-vision').addEventListener('click', e => {
+      const panneau = conteneur.querySelector('#pl-reglages');
+      panneau.hidden = !panneau.hidden;
+      e.currentTarget.setAttribute('aria-expanded', String(!panneau.hidden));
+      e.currentTarget.classList.toggle('actif', !panneau.hidden);
+    });
+    choixPortee.addEventListener('change', () => {
+      const v = choixPortee.value;
+      partie.reglages = { ...(partie.reglages || {}), porteeCouloir: v === 'illimitee' ? v : Number(v) };
+      modifier(() => {}); // recalcule ce que les héros voient avec la nouvelle portée
+      msg(v === 'illimitee' ? 'Vue illimitée dans les couloirs (règle officielle).' : `Vue limitée à ${v} cases dans les couloirs.`);
+    });
     conteneur.querySelector('#pl-mj').addEventListener('click', () => {
       vueMJ = !vueMJ; selection = null;
       msg(vueMJ ? 'Vue MJ : tout est visible. Les joueurs ne doivent pas regarder !' : 'Vue des joueurs.');
