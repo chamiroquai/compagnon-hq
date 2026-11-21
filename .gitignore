@@ -1,0 +1,6 @@
+# Garde-fous : ces fichiers ne doivent jamais être publiés.
+prive/
+*.prive.json
+compagnon-sauvegarde-*.json
+.DS_Store
+Thumbs.db

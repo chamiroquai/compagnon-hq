@@ -1,0 +1,346 @@
+/* app.js — Interface du Compagnon de quête (étape 2 : squelette).
+   Contenu : liste des parties, notes de partie, sauvegarde et restauration
+   en fichier JSON, installation hors ligne et mises à jour.
+   Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
+'use strict';
+
+const VERSION_APP = '0.1.0';
+const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
+const VERSION_FORMAT = 1;
+const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
+
+const $ = sel => document.querySelector(sel);
+const vue = $('#vue');
+let partieOuverte = null; // identifiant de la partie affichée, ou null
+
+/* ---------- Outils ---------- */
+
+// Protège le texte saisi avant de l'insérer dans la page.
+function echapper(texte) {
+  return String(texte ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function nouvelId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function dateLisible(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function joursDepuis(iso) {
+  return iso ? (Date.now() - new Date(iso).getTime()) / 86400000 : Infinity;
+}
+
+function bandeau(html, actions = []) {
+  const b = $('#bandeau');
+  if (!html) { b.hidden = true; b.innerHTML = ''; return; }
+  b.innerHTML = `<span>${html}</span>` + actions.map((a, i) => `<button data-i="${i}">${echapper(a.texte)}</button>`).join('');
+  b.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => actions[btn.dataset.i].action()));
+  b.hidden = false;
+}
+
+function choisirOnglet(nom) {
+  document.querySelectorAll('.onglets button').forEach(b => b.classList.toggle('actif', b.dataset.vue === nom));
+}
+
+/* ---------- Vue : liste des parties ---------- */
+
+async function afficherParties() {
+  partieOuverte = null;
+  choisirOnglet('parties');
+  $('#titre-vue').textContent = 'Parties';
+  $('#btn-retour').hidden = true;
+
+  const parties = (await Stockage.listerParties()).sort((a, b) => b.modifieeLe.localeCompare(a.modifieeLe));
+  vue.innerHTML = `
+    <section class="carte">
+      <h2>Nouvelle partie</h2>
+      <form id="form-nouvelle" class="ligne">
+        <input id="nom-nouvelle" type="text" placeholder="Nom (ex. Campagne avec mon fils)" maxlength="80" required>
+        <button type="submit" class="principal">Créer</button>
+      </form>
+    </section>
+    <section class="carte">
+      <h2>Mes parties</h2>
+      ${parties.length === 0 ? '<p class="discret">Aucune partie pour l’instant.</p>' : `
+      <ul class="liste">
+        ${parties.map(p => `
+          <li>
+            <button class="ouvrir" data-id="${echapper(p.id)}">
+              <strong>${echapper(p.nom)}</strong>
+              <span class="discret petit">modifiée le ${dateLisible(p.modifieeLe)}</span>
+            </button>
+          </li>`).join('')}
+      </ul>`}
+    </section>`;
+
+  $('#form-nouvelle').addEventListener('submit', async e => {
+    e.preventDefault();
+    const nom = $('#nom-nouvelle').value.trim();
+    if (!nom) return;
+    const maintenant = new Date().toISOString();
+    const partie = { id: nouvelId(), nom, notes: '', creeeLe: maintenant, modifieeLe: maintenant };
+    await Stockage.enregistrerPartie(partie);
+    afficherPartie(partie.id);
+  });
+  vue.querySelectorAll('.ouvrir').forEach(b => b.addEventListener('click', () => afficherPartie(b.dataset.id)));
+  verifierRappel();
+}
+
+/* ---------- Vue : une partie ---------- */
+
+async function afficherPartie(id) {
+  const partie = await Stockage.lirePartie(id);
+  if (!partie) return afficherParties();
+  partieOuverte = id;
+  choisirOnglet('parties');
+  $('#titre-vue').textContent = partie.nom;
+  $('#btn-retour').hidden = false;
+
+  vue.innerHTML = `
+    <section class="carte">
+      <h2>Plateau</h2>
+      <p class="discret">Le plateau de jeu arrivera à l’étape 3.</p>
+    </section>
+    <section class="carte">
+      <h2>Notes de partie</h2>
+      <textarea id="notes" rows="8" placeholder="Notes libres : héros, or, quêtes terminées…">${echapper(partie.notes)}</textarea>
+      <p id="etat-notes" class="discret petit">Enregistrement automatique.</p>
+    </section>
+    <section class="carte">
+      <h2>Gérer</h2>
+      <p class="discret petit">Créée le ${dateLisible(partie.creeeLe)} · modifiée le ${dateLisible(partie.modifieeLe)}</p>
+      <div class="ligne">
+        <button id="btn-renommer">Renommer</button>
+        <button id="btn-supprimer" class="danger">Supprimer</button>
+      </div>
+    </section>`;
+
+  // Enregistre les notes peu après la dernière frappe.
+  let minuterie = null;
+  $('#notes').addEventListener('input', () => {
+    $('#etat-notes').textContent = 'Modification…';
+    clearTimeout(minuterie);
+    minuterie = setTimeout(async () => {
+      partie.notes = $('#notes').value;
+      partie.modifieeLe = new Date().toISOString();
+      await Stockage.enregistrerPartie(partie);
+      $('#etat-notes').textContent = 'Enregistré sur cet iPad.';
+    }, 600);
+  });
+
+  $('#btn-renommer').addEventListener('click', async () => {
+    const nom = prompt('Nouveau nom de la partie :', partie.nom);
+    if (!nom || !nom.trim()) return;
+    partie.nom = nom.trim().slice(0, 80);
+    partie.modifieeLe = new Date().toISOString();
+    await Stockage.enregistrerPartie(partie);
+    afficherPartie(id);
+  });
+
+  $('#btn-supprimer').addEventListener('click', async () => {
+    if (!confirm(`Supprimer définitivement « ${partie.nom} » de cet iPad ?\nPensez à faire une sauvegarde avant si besoin.`)) return;
+    await Stockage.supprimerPartie(id);
+    afficherParties();
+  });
+}
+
+/* ---------- Vue : sauvegardes ---------- */
+
+async function afficherSauvegardes() {
+  partieOuverte = null;
+  choisirOnglet('sauvegardes');
+  $('#titre-vue').textContent = 'Sauvegardes';
+  $('#btn-retour').hidden = true;
+
+  const derniere = await Stockage.lireReglage('derniereSauvegarde');
+  const nb = (await Stockage.listerParties()).length;
+
+  vue.innerHTML = `
+    <section class="carte">
+      <h2>Sauvegarder</h2>
+      <p>Crée un fichier contenant toutes vos parties (${nb}). Sur l’iPad, choisissez ensuite
+         « Enregistrer dans Fichiers ». Ce fichier vous appartient : il ne quitte l’iPad que si vous le déplacez.</p>
+      <p class="discret petit">Dernière sauvegarde : ${dateLisible(derniere)}</p>
+      <button id="btn-exporter" class="principal">Créer le fichier de sauvegarde</button>
+    </section>
+    <section class="carte">
+      <h2>Restaurer</h2>
+      <p>Ouvre un fichier de sauvegarde. Les parties qu’il contient sont ajoutées ; une partie déjà présente
+         (même identifiant) est remplacée par la version du fichier, après confirmation.</p>
+      <button id="btn-importer">Ouvrir un fichier…</button>
+      <p id="resultat-import" class="petit"></p>
+    </section>`;
+
+  $('#btn-exporter').addEventListener('click', exporter);
+  $('#btn-importer').addEventListener('click', () => $('#fichier-import').click());
+}
+
+async function exporter() {
+  const maintenant = new Date().toISOString();
+  const contenu = {
+    format: FORMAT_SAUVEGARDE,
+    versionFormat: VERSION_FORMAT,
+    versionApp: VERSION_APP,
+    exporteeLe: maintenant,
+    parties: await Stockage.listerParties(),
+  };
+  const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `compagnon-sauvegarde-${maintenant.slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  await Stockage.ecrireReglage('derniereSauvegarde', maintenant);
+  verifierRappel();
+  if (!partieOuverte) afficherSauvegardes();
+}
+
+// Vérifie qu'une partie importée a la forme attendue ; renvoie un message d'erreur ou null.
+function erreurPartie(p, i) {
+  if (!p || typeof p !== 'object') return `élément n° ${i + 1} : ce n’est pas une partie`;
+  if (typeof p.id !== 'string' || !p.id) return `élément n° ${i + 1} : identifiant manquant`;
+  if (typeof p.nom !== 'string' || !p.nom) return `élément n° ${i + 1} : nom manquant`;
+  return null;
+}
+
+async function importerFichier(fichier) {
+  const sortie = $('#resultat-import');
+  const dire = (texte, classe) => { if (sortie) { sortie.textContent = texte; sortie.className = 'petit ' + (classe || ''); } };
+  let donnees;
+  try {
+    donnees = JSON.parse(await fichier.text());
+  } catch {
+    return dire('Ce fichier n’est pas un fichier JSON lisible.', 'erreur');
+  }
+  if (donnees?.format !== FORMAT_SAUVEGARDE) return dire('Ce fichier n’est pas une sauvegarde du Compagnon de quête.', 'erreur');
+  if (donnees.versionFormat > VERSION_FORMAT) return dire('Cette sauvegarde vient d’une version plus récente de l’application : mettez-la à jour d’abord.', 'erreur');
+  if (!Array.isArray(donnees.parties)) return dire('La sauvegarde ne contient pas de liste de parties.', 'erreur');
+  const erreurs = donnees.parties.map(erreurPartie).filter(Boolean);
+  if (erreurs.length) return dire('Sauvegarde abîmée : ' + erreurs.join(' ; '), 'erreur');
+
+  const existantes = new Set((await Stockage.listerParties()).map(p => p.id));
+  const remplacees = donnees.parties.filter(p => existantes.has(p.id));
+  const message = `Ce fichier contient ${donnees.parties.length} partie(s), sauvegardée(s) le ${dateLisible(donnees.exporteeLe)}.`
+    + (remplacees.length ? `\n${remplacees.length} existe(nt) déjà sur cet iPad et sera(ont) remplacée(s) :\n– ${remplacees.map(p => p.nom).join('\n– ')}` : '')
+    + '\n\nContinuer ?';
+  if (!confirm(message)) return dire('Restauration annulée.');
+
+  for (const p of donnees.parties) {
+    await Stockage.enregistrerPartie({ notes: '', creeeLe: donnees.exporteeLe, modifieeLe: donnees.exporteeLe, ...p });
+  }
+  dire(`${donnees.parties.length} partie(s) restaurée(s).`, 'succes');
+}
+
+$('#fichier-import').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = ''; // permet de rouvrir le même fichier
+  if (f) await importerFichier(f);
+});
+
+/* ---------- Vue : à propos ---------- */
+
+async function afficherAPropos() {
+  partieOuverte = null;
+  choisirOnglet('apropos');
+  $('#titre-vue').textContent = 'À propos';
+  $('#btn-retour').hidden = true;
+
+  let persistant = null;
+  try { persistant = navigator.storage?.persisted ? await navigator.storage.persisted() : null; } catch { }
+  const installee = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+  vue.innerHTML = `
+    <section class="carte">
+      <h2>Compagnon de quête ${VERSION_APP}</h2>
+      <p>Application personnelle, à usage familial. Elle ne contient aucun texte, aucune illustration
+         ni aucun logo officiel.</p>
+    </section>
+    <section class="carte">
+      <h2>Vos données</h2>
+      <ul class="puces">
+        <li>Toutes les parties sont enregistrées <strong>uniquement sur cet appareil</strong>.</li>
+        <li>L’application n’envoie rien sur Internet : pas de compte, pas de statistiques, pas de serveur.</li>
+        <li>Seul le code de l’application est publié sur GitHub ; vos parties et vos quêtes n’y vont jamais.</li>
+      </ul>
+      <p class="petit">Installée sur l’écran d’accueil : <strong>${installee ? 'oui' : 'non'}</strong>
+        ${installee ? '' : '— dans Safari : bouton Partager, puis « Sur l’écran d’accueil ».'}</p>
+      <p class="petit">Stockage protégé contre l’effacement automatique :
+        <strong>${persistant === true ? 'oui' : persistant === false ? 'non garanti' : 'inconnu'}</strong>.
+        Dans tous les cas, faites des sauvegardes régulières.</p>
+    </section>
+    <section class="carte">
+      <h2>Mises à jour</h2>
+      <button id="btn-maj">Rechercher une mise à jour</button>
+      <p id="etat-maj" class="discret petit"></p>
+    </section>`;
+
+  $('#btn-maj').addEventListener('click', async () => {
+    const etat = $('#etat-maj');
+    if (!('serviceWorker' in navigator)) return (etat.textContent = 'Mises à jour automatiques indisponibles ici.');
+    etat.textContent = 'Recherche…';
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      await reg?.update();
+      etat.textContent = reg?.waiting || reg?.installing ? 'Une mise à jour arrive : un bandeau va s’afficher.' : 'Vous avez la dernière version.';
+    } catch {
+      etat.textContent = 'Impossible de vérifier (pas de connexion ?).';
+    }
+  });
+}
+
+/* ---------- Rappel de sauvegarde ---------- */
+
+async function verifierRappel() {
+  const nb = (await Stockage.listerParties()).length;
+  const derniere = await Stockage.lireReglage('derniereSauvegarde');
+  if (nb > 0 && joursDepuis(derniere) > JOURS_RAPPEL) {
+    bandeau(derniere ? `Dernière sauvegarde il y a plus de ${JOURS_RAPPEL} jours.` : 'Aucune sauvegarde n’a encore été faite.',
+      [{ texte: 'Sauvegarder', action: afficherSauvegardes }, { texte: 'Plus tard', action: () => bandeau(null) }]);
+  } else if (!$('#bandeau').dataset.maj) {
+    bandeau(null);
+  }
+}
+
+/* ---------- Hors ligne et mises à jour ---------- */
+
+async function preparerHorsLigne() {
+  // Demande au système de ne pas effacer les données de l'application.
+  try { if (navigator.storage?.persist) await navigator.storage.persist(); } catch { }
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    const proposer = w => {
+      $('#bandeau').dataset.maj = '1';
+      bandeau('Nouvelle version disponible.', [{ texte: 'Mettre à jour', action: () => w.postMessage('activer') }]);
+    };
+    if (reg.waiting && navigator.serviceWorker.controller) proposer(reg.waiting);
+    reg.addEventListener('updatefound', () => {
+      const w = reg.installing;
+      w?.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) proposer(w); });
+    });
+    // Recharge seulement lors d'une vraie mise à jour, pas lors de la toute première installation.
+    let recharge = !navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!recharge) { recharge = true; location.reload(); } else recharge = true;
+    });
+    // Vérifie s'il existe une nouvelle version à chaque retour dans l'application.
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  } catch { /* hors ligne au premier lancement : rien à faire */ }
+}
+
+/* ---------- Démarrage ---------- */
+
+document.querySelectorAll('.onglets button').forEach(b => b.addEventListener('click', () => {
+  ({ parties: afficherParties, sauvegardes: afficherSauvegardes, apropos: afficherAPropos })[b.dataset.vue]();
+}));
+$('#btn-retour').addEventListener('click', afficherParties);
+
+afficherParties();
+verifierRappel();
+preparerHorsLigne();
