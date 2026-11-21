@@ -520,6 +520,8 @@ const VuePlateau = (() => {
       msg(v === 'illimitee' ? 'Vue illimitée dans les couloirs (règle officielle).' : `Vue limitée à ${v} cases dans les couloirs.`);
     });
     conteneur.querySelector('#pl-mj').addEventListener('click', () => {
+      // Entrer en vue MJ dévoile tout le plateau : on demande confirmation (pas pour en sortir).
+      if (!vueMJ && !confirm('Passer en vue MJ ?\n\nTout le plateau sera visible : monstres, portes secrètes, salles cachées. Les joueurs ne doivent pas regarder l’écran.')) return;
       vueMJ = !vueMJ; selection = null;
       msg(vueMJ ? 'Vue MJ : tout est visible. Les joueurs ne doivent pas regarder !' : 'Vue des joueurs.');
       dessiner();
