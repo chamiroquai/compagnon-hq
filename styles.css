@@ -375,3 +375,23 @@ table.caracs.petite { margin-top: 8px; }
 .combattant.defenseur .portrait { width: 84px; height: 84px; opacity: 0.9; }
 .combattant.attaquant.vaincu .portrait, .combattant.defenseur.vaincu .portrait { filter: grayscale(1) brightness(0.5); }
 .combattant .role { color: #ffb36b; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* ---------- Personnages et groupe (v0.11.0) ---------- */
+.choix-classe, .case-groupe select {
+  min-height: 48px; font: inherit; color: var(--texte); background: #3a3226;
+  border: 1px solid var(--bord); border-radius: 10px; padding: 0 10px;
+}
+.ligne-perso { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ouvrir-perso.mort { opacity: 0.6; }
+.grille-groupe { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.case-groupe { display: flex; flex-direction: column; gap: 6px; }
+.case-groupe > span { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.grille-champs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+.champ-perso { display: flex; flex-direction: column; gap: 4px; }
+.champ-perso span { color: var(--discret); font-size: 0.9rem; }
+.champ-perso input { min-height: 44px; padding: 8px 10px; font: inherit; color: var(--texte); background: #1f1a14; border: 1px solid var(--bord); border-radius: 8px; }
+.champ-perso.large { margin-top: 8px; }
+.inventaire { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.inventaire li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; background: #1f1a14; border: 1px solid var(--bord); border-radius: 8px; }
+button.petit-bouton { min-width: 40px; min-height: 40px; font-size: 1rem; }
+.fiche h3 { margin: 14px 0 6px; font-size: 1rem; color: var(--or); }

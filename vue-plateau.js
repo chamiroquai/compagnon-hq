@@ -34,6 +34,8 @@ const VuePlateau = (() => {
     if (!etat.tour) etat.tour = { numero: 1, index: 0 }; // parties commencées avant la v0.5.0
     const caracs = options.caracs || Regles.caracsVides();
     const carac = (famille, type, champ) => Regles.valeur(caracs, famille, type, champ);
+    // Caractéristique d'un héros : celle de son personnage (registre), sinon celle des Réglages.
+    const caracHeros = (h, champ) => (Number.isFinite(h?.[champ]) ? h[champ] : carac('heros', h.classe || h.id, champ));
     // Points de Vie (champ « corps ») et d'Esprit de départ, d'après les caractéristiques saisies.
     // (Seulement s'ils n'existent pas encore : une quête en cours garde ses valeurs.)
     let initialise = false;
@@ -110,7 +112,7 @@ const VuePlateau = (() => {
             <ul class="puces petit">
               <li>Le héros dont c’est le tour porte un anneau blanc. « Se déplacer » : lancez vos 2 dés rouges, touchez le total,
                   puis touchez les cases une par une (les cases possibles sont encadrées).</li>
-              <li>Fiche d’un héros (points de Vie, d’Esprit, dés) : touchez son pion sur le plateau, ou sa pastille dans l’ordre de jeu en haut.</li>
+              <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : touchez son pion sur le plateau, ou sa pastille dans l’ordre de jeu en haut.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
@@ -119,6 +121,15 @@ const VuePlateau = (() => {
                   dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
               <li>Touchez un message pour le faire disparaître.</li>
             </ul>
+          </section>
+          <section>
+            <h3>Fin de la quête</h3>
+            <p class="discret petit">Enregistre l’or et l’inventaire de chaque héros dans son personnage
+              (onglet Héros). Points de Vie et d’Esprit repartent au maximum à la quête suivante.</p>
+            <div class="ligne">
+              <button id="pl-reussie" class="principal">Quête réussie</button>
+              <button id="pl-echouee">Quête échouée</button>
+            </div>
           </section>
           <section class="ligne">
             <button id="pl-quitter2">Retour aux parties</button>
@@ -863,7 +874,7 @@ const VuePlateau = (() => {
         // Duel lancé par le héros actif : on attend ses crânes.
         const h = herosActif();
         const m = etat.monstres.find(k => k.id === combat.monstre);
-        const n = carac('heros', h.id, 'attaque');
+        const n = caracHeros(h, 'attaque');
         html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
             ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'defenseur')}</div>
           <p class="ambiance">${echapperTexte(combat.ambiance)}</p>
@@ -875,7 +886,7 @@ const VuePlateau = (() => {
         const d = z.defense;
         const h = etat.heros.find(k => k.id === d.heros);
         const m = etat.monstres.find(k => k.id === d.monstre);
-        const n = carac('heros', h.id, 'defense');
+        const n = caracHeros(h, 'defense');
         html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'defenseur')}<div class="centre">⚔</div>
             ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'attaquant')}</div>
           <p class="legende">Attaque de ${infoMonstre(m.type).nom}</p>
@@ -919,37 +930,57 @@ const VuePlateau = (() => {
     function ouvrirFiche(hid) {
       const h = etat.heros.find(k => k.id === hid);
       const fiche = conteneur.querySelector('#pl-fiche');
-      const manque = Regles.manquantes(caracs, 'heros', hid);
-      const ligne = (nom, champ) => `<tr><th>${nom}</th><td>${carac('heros', hid, champ) ?? '?'}</td></tr>`;
-      const compteur = (nom, champ) => `
+      const classe = Regles.TYPES_HEROS.find(t => t.id === (h.classe || h.id))?.nom || '';
+      const manque = ['attaque', 'defense'].filter(c => caracHeros(h, c) === null).map(c => c === 'attaque' ? 'dés d’attaque' : 'dés de défense');
+      const ligne = (nom, champ) => `<tr><th>${nom}</th><td>${caracHeros(h, champ) ?? '?'}</td></tr>`;
+      const compteur = (nom, champ, pas = [1]) => `
         <div class="compteur-fiche">
           <span>${nom}</span>
-          <button data-modif="${champ}" data-delta="-1" class="icone" aria-label="${nom} moins 1">−</button>
-          <strong>${h[champ] ?? '?'}${h[champ + 'Max'] != null ? ' / ' + h[champ + 'Max'] : ''}</strong>
-          <button data-modif="${champ}" data-delta="1" class="icone" aria-label="${nom} plus 1">+</button>
+          ${pas.slice().reverse().map(d => `<button data-modif="${champ}" data-delta="-${d}" class="icone" aria-label="${nom} moins ${d}">−${d > 1 ? d : ''}</button>`).join('')}
+          <strong>${h[champ] ?? (champ === 'or' ? 0 : '?')}${h[champ + 'Max'] != null ? ' / ' + h[champ + 'Max'] : ''}</strong>
+          ${pas.map(d => `<button data-modif="${champ}" data-delta="${d}" class="icone" aria-label="${nom} plus ${d}">+${d > 1 ? d : ''}</button>`).join('')}
         </div>`;
+      const inventaire = h.inventaire || [];
       fiche.innerHTML = `
         <div class="feuille-entete">
-          <h2><span class="pastille h-${hid}"></span> ${h.nom}</h2>
+          <h2><span class="pastille h-${hid}"></span> ${echapperTexte(h.nom)}</h2>
           <button class="icone" data-fermer aria-label="Fermer la fiche">✕</button>
         </div>
-        ${manque.length ? `<p class="erreur petit">À remplir dans Réglages › Caractéristiques : ${manque.join(', ')}.</p>` : ''}
+        ${h.nom !== classe ? `<p class="discret petit">${classe}</p>` : ''}
+        ${manque.length ? `<p class="erreur petit">À remplir (onglet Héros ou Réglages) : ${manque.join(', ')}.</p>` : ''}
         ${compteur('Vie', 'corps')}
         ${compteur('Esprit', 'esprit')}
         ${h.corps === 0 ? '<p class="erreur">⚠ 0 point de Vie : le héros meurt, sauf potion ou sort de soin.</p>' : ''}
+        ${compteur('Or', 'or', [1, 10])}
         <table class="caracs petite"><tbody>${ligne('Dés d’attaque', 'attaque')}${ligne('Dés de défense', 'defense')}</tbody></table>
-        <p class="discret petit">Les boutons − et + servent aux blessures, soins et corrections. Ils s’annulent avec ↶.</p>`;
+        <h3>Inventaire</h3>
+        ${inventaire.length ? `<ul class="inventaire">${inventaire.map((o, k) => `<li><span>${echapperTexte(o.nom)}</span>
+            <button class="icone petit-bouton" data-retirer="${k}" aria-label="Retirer ${echapperTexte(o.nom)}">✕</button></li>`).join('')}</ul>`
+          : '<p class="discret petit">Vide.</p>'}
+        <button id="fi-ajouter">Ajouter un objet</button>
+        <p class="discret petit">Or et inventaire sont enregistrés dans le personnage à la fin de la quête (menu ☰).
+          Les boutons − et + s’annulent avec ↶.</p>`;
       fiche.hidden = false;
       fiche.querySelector('[data-fermer]').addEventListener('click', () => { fiche.hidden = true; });
       fiche.querySelectorAll('[data-modif]').forEach(b => b.addEventListener('click', () => {
         const champ = b.dataset.modif, delta = +b.dataset.delta;
         modifier(e => {
           const k = e.heros.find(z => z.id === hid);
-          const max = k[champ + 'Max'] ?? 99;
+          const max = k[champ + 'Max'] ?? 9999;
           k[champ] = Math.max(0, Math.min(max, (k[champ] ?? 0) + delta));
         });
         ouvrirFiche(hid);
       }));
+      fiche.querySelectorAll('[data-retirer]').forEach(b => b.addEventListener('click', () => {
+        modifier(e => { e.heros.find(z => z.id === hid).inventaire.splice(+b.dataset.retirer, 1); });
+        ouvrirFiche(hid);
+      }));
+      fiche.querySelector('#fi-ajouter').addEventListener('click', () => {
+        const nom = prompt(`Objet à ajouter à l’inventaire de ${h.nom} :`);
+        if (!nom || !nom.trim()) return;
+        modifier(e => { const k = e.heros.find(z => z.id === hid); (k.inventaire = k.inventaire || []).push({ nom: nom.trim().slice(0, 80) }); });
+        ouvrirFiche(hid);
+      });
     }
 
     function toucherPorte(id) {
@@ -1000,6 +1031,8 @@ const VuePlateau = (() => {
     conteneur.querySelector('#pl-quitter').addEventListener('click', quitter);
     conteneur.querySelector('#pl-quitter2').addEventListener('click', quitter);
     conteneur.querySelector('#pl-abandon').addEventListener('click', () => options.abandonner?.());
+    conteneur.querySelector('#pl-reussie').addEventListener('click', () => options.terminer?.('reussie'));
+    conteneur.querySelector('#pl-echouee').addEventListener('click', () => options.terminer?.('echouee'));
 
     // Notes de partie (enregistrées peu après la dernière frappe).
     const notes = conteneur.querySelector('#pl-notes');

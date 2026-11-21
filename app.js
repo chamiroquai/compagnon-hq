@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.10.1';
+const VERSION_APP = '0.11.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -118,6 +118,16 @@ async function afficherPartie(id) {
     const caracs = await lireCaracs();
     VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, {
       quitter: afficherParties, abandonner: abandonnerQuete, caracs,
+      terminer: async issue => {
+        if (!confirm(`Terminer la quête : ${issue === 'reussie' ? 'réussie' : 'échouée'} ?\nL’or et l’inventaire de chaque héros seront enregistrés dans son personnage.`)) return;
+        const morts = await Heros.terminerQuete(partie, issue);
+        delete partie.quete; delete partie.etat;
+        await enregistrerPartie();
+        await afficherPartie(id);
+        bandeau(`${issue === 'reussie' ? 'Quête réussie !' : 'Quête échouée.'} Or et inventaires enregistrés.`
+          + (morts.length ? ` ☠ ${morts.map(echapper).join(', ')} ${morts.length > 1 ? 'sont morts' : 'est mort'}.` : ''),
+          [{ texte: 'OK', action: () => bandeau(null) }]);
+      },
       reglages: () => afficherAPropos(),
     });
     return;
@@ -134,6 +144,7 @@ async function afficherPartie(id) {
       </div>
       ${partie.quete ? '<div class="ligne fin-quete"><button id="btn-abandon" class="danger">Abandonner la quête</button></div>' : ''}
     </section>
+    ${await Heros.carteGroupe(partie, !!partie.quete)}
     <section class="carte">
       <h2>Notes de partie</h2>
       <textarea id="notes" rows="8" placeholder="Notes libres : héros, or, quêtes terminées…">${echapper(partie.notes)}</textarea>
@@ -163,11 +174,13 @@ async function afficherPartie(id) {
       // Copie de la quête dans la partie : la partie reste lisible même si la quête change plus tard.
       partie.quete = JSON.parse(JSON.stringify(QUETE_DEMO));
       partie.reglages = { porteeCouloir: Plateau.PORTEE_DEFAUT, ...(partie.reglages || {}) };
-      partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages));
+      partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages), await Heros.groupeDe(partie));
       await enregistrerPartie();
       afficherPartie(id);
     });
   }
+
+  Heros.brancherGroupe(partie, enregistrerPartie);
 
   // Enregistre les notes peu après la dernière frappe.
   let minuterie = null;
@@ -280,6 +293,7 @@ async function exporter() {
     exporteeLe: maintenant,
     parties: await Stockage.listerParties(),
     caracteristiques: await Stockage.lireReglage('caracteristiques') || null,
+    personnages: await Stockage.listerPersonnages(),
   };
   const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -323,11 +337,15 @@ async function importerFichier(fichier) {
   const message = `Ce fichier contient ${donnees.parties.length} partie(s), sauvegardée(s) le ${dateLisible(donnees.exporteeLe)}.`
     + (remplacees.length ? `\n${remplacees.length} existe(nt) déjà sur cet iPad et sera(ont) remplacée(s) :\n– ${remplacees.map(p => p.nom).join('\n– ')}` : '')
     + (donnees.caracteristiques ? '\nLes caractéristiques (héros et monstres) du fichier remplaceront celles de cet iPad.' : '')
+    + (Array.isArray(donnees.personnages) && donnees.personnages.length ? `\n${donnees.personnages.length} personnage(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
     + '\n\nContinuer ?';
   if (!confirm(message)) return dire('Restauration annulée.');
 
   for (const p of donnees.parties) {
     await Stockage.enregistrerPartie({ notes: '', creeeLe: donnees.exporteeLe, modifieeLe: donnees.exporteeLe, ...p });
+  }
+  for (const p of Array.isArray(donnees.personnages) ? donnees.personnages : []) {
+    if (p && typeof p.id === 'string' && typeof p.nom === 'string') await Stockage.enregistrerPersonnage(p);
   }
   if (donnees.caracteristiques && typeof donnees.caracteristiques === 'object') {
     await Stockage.ecrireReglage('caracteristiques', donnees.caracteristiques);
@@ -502,7 +520,7 @@ async function preparerHorsLigne() {
 /* ---------- Démarrage ---------- */
 
 document.querySelectorAll('.onglets button').forEach(b => b.addEventListener('click', () => {
-  ({ parties: afficherParties, sauvegardes: afficherSauvegardes, apropos: afficherAPropos })[b.dataset.vue]();
+  ({ parties: afficherParties, heros: () => Heros.afficherListe(), sauvegardes: afficherSauvegardes, apropos: afficherAPropos })[b.dataset.vue]();
 }));
 $('#btn-retour').addEventListener('click', afficherParties);
 

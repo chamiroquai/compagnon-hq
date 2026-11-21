@@ -5,7 +5,7 @@
 
 const Stockage = (() => {
   const NOM_BASE = 'compagnon-hq';
-  const VERSION_BASE = 1;
+  const VERSION_BASE = 2; // v2 : ajout du magasin « personnages »
   let basePromise = null;
 
   // Ouvre (ou crée) la base locale. Une seule ouverture pour toute l'application.
@@ -19,6 +19,8 @@ const Stockage = (() => {
           if (!db.objectStoreNames.contains('parties')) db.createObjectStore('parties', { keyPath: 'id' });
           // Magasin « reglages » : petites valeurs diverses (date de dernière sauvegarde…).
           if (!db.objectStoreNames.contains('reglages')) db.createObjectStore('reglages');
+          // Magasin « personnages » : le registre des héros durables (nom, or, inventaire…).
+          if (!db.objectStoreNames.contains('personnages')) db.createObjectStore('personnages', { keyPath: 'id' });
         };
         req.onsuccess = () => ok(req.result);
         req.onerror = () => echec(req.error);
@@ -44,6 +46,10 @@ const Stockage = (() => {
     lirePartie: id => operation('parties', 'readonly', s => s.get(id)),
     enregistrerPartie: partie => operation('parties', 'readwrite', s => s.put(partie)),
     supprimerPartie: id => operation('parties', 'readwrite', s => s.delete(id)),
+    listerPersonnages: () => operation('personnages', 'readonly', s => s.getAll()),
+    lirePersonnage: id => operation('personnages', 'readonly', s => s.get(id)),
+    enregistrerPersonnage: p => operation('personnages', 'readwrite', s => s.put(p)),
+    supprimerPersonnage: id => operation('personnages', 'readwrite', s => s.delete(id)),
     lireReglage: cle => operation('reglages', 'readonly', s => s.get(cle)),
     ecrireReglage: (cle, valeur) => operation('reglages', 'readwrite', s => s.put(valeur, cle)),
   };

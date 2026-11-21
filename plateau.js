@@ -311,9 +311,24 @@ const Plateau = (() => {
     { id: 'enchanteur', nom: 'Enchanteur', court: 'En' },
   ];
 
-  function etatInitial(quete, portee = Infinity) {
+  // groupe (facultatif) : personnages du registre, au plus un par classe :
+  //   [{ persoId, classe, nom, court, vieMax, espritMax, attaque, defense, or, inventaire }]
+  // Sans groupe, les 4 héros de base sont utilisés, sans nom personnel.
+  function etatInitial(quete, portee = Infinity, groupe = null) {
+    const membres = groupe?.length
+      ? HEROS.filter(c => groupe.some(p => p.classe === c.id)).map(c => {
+          const p = groupe.find(q => q.classe === c.id);
+          return {
+            id: c.id, classe: c.id, persoId: p.persoId, nom: p.nom || c.nom, court: p.court || c.court,
+            corps: p.vieMax ?? undefined, corpsMax: p.vieMax ?? undefined,
+            esprit: p.espritMax ?? undefined, espritMax: p.espritMax ?? undefined,
+            attaque: p.attaque ?? undefined, defense: p.defense ?? undefined,
+            or: p.or || 0, inventaire: JSON.parse(JSON.stringify(p.inventaire || [])),
+          };
+        })
+      : HEROS.map(h => ({ ...h, classe: h.id }));
     const etat = {
-      heros: HEROS.map((h, n) => ({ ...h, x: quete.departs[n]?.[0] ?? null, y: quete.departs[n]?.[1] ?? null })),
+      heros: membres.map((h, n) => ({ ...h, x: quete.departs[n]?.[0] ?? null, y: quete.departs[n]?.[1] ?? null })),
       monstres: (quete.monstres || []).map(m => ({ ...m })),
       portesOuvertes: [],
       secretesTrouvees: [],
