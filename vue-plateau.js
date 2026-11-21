@@ -35,7 +35,11 @@ const VuePlateau = (() => {
     const caracs = options.caracs || Regles.caracsVides();
     const carac = (famille, type, champ) => Regles.valeur(caracs, famille, type, champ);
     // Caractéristique d'un héros : celle de son personnage (registre), sinon celle des Réglages.
-    const caracHeros = (h, champ) => (Number.isFinite(h?.[champ]) ? h[champ] : carac('heros', h.classe || h.id, champ));
+    const caracBrute = (h, champ) => (Number.isFinite(h?.[champ]) ? h[champ] : carac('heros', h.classe || h.id, champ));
+    // Dans une fosse : un dé de combat de moins en attaque et en défense (minimum 1).
+    const penaliteFosse = (f, champ, n) => (n !== null && (champ === 'attaque' || champ === 'defense') && Plateau.fosseEn(etat, f.x, f.y) ? Math.max(1, n - 1) : n);
+    const caracHeros = (h, champ) => penaliteFosse(h, champ, caracBrute(h, champ));
+    const caracMonstre = (m, champ) => penaliteFosse(m, champ, Regles.valeurMonstre(caracs, m, champ));
     // Points de Vie (champ « corps ») et d'Esprit de départ, d'après les caractéristiques saisies.
     // (Seulement s'ils n'existent pas encore : une quête en cours garde ses valeurs.)
     let initialise = false;
@@ -185,7 +189,7 @@ const VuePlateau = (() => {
       if (!historique.length) return;
       etat = JSON.parse(historique.pop());
       partie.etat = etat;
-      selection = null; combat = null; conclusion = null; ciblage = false; fenetreActions = null;
+      selection = null; combat = null; conclusion = null; ciblage = false; fenetreActions = null; evenement = null;
       enregistrer();
       msg('Action annulée.');
       dessiner();
@@ -224,6 +228,25 @@ const VuePlateau = (() => {
         el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: (m.l || 1) * T - 8, height: (m.h || 1) * T - 8, rx: 3 }, gr);
         const t = el('text', { x: (m.x + (m.l || 1) / 2) * T, y: (m.y + (m.h || 1) / 2) * T + 4, class: 'etiquette' }, gr);
         t.textContent = (m.l || 1) > 1 || (m.h || 1) > 1 ? m.nom : m.nom.slice(0, 3);
+      }
+
+      // 3 bis. Pièges : connus (repérés ou déclenchés) ; en vue MJ, aussi les pièges cachés.
+      const SYMBOLES_PIEGES = { fosse: '◎', bloc: '▦', lance: '↟' };
+      for (const p of etat.pieges || []) {
+        const i = Plateau.idx(L, p.x, p.y);
+        const connu = p.trouve || p.declenche;
+        if (!(vueMJ || (connu && vu.has(i)))) continue;
+        const cls = 'piege piege-' + p.type + (p.declenche ? ' declenche' : '') + (!connu ? ' cache' : '');
+        const gp = el('g', { class: cls }, svg);
+        if (p.declenche && p.type === 'bloc') {
+          el('rect', { x: p.x * T + 1, y: p.y * T + 1, width: T - 2, height: T - 2, rx: 3 }, gp);
+        } else if (p.declenche && p.type === 'fosse') {
+          el('rect', { x: p.x * T + 4, y: p.y * T + 4, width: T - 8, height: T - 8, rx: 10 }, gp);
+        } else {
+          el('rect', { x: p.x * T + 3, y: p.y * T + 3, width: T - 6, height: T - 6, rx: 4 }, gp);
+          const t = el('text', { x: p.x * T + T / 2, y: p.y * T + T / 2 + 6, class: 'symbole-piege' }, gp);
+          t.textContent = SYMBOLES_PIEGES[p.type] || '!';
+        }
       }
 
       // 4. Murs (traits épais sur les bords entre zones différentes)
@@ -502,15 +525,24 @@ const VuePlateau = (() => {
       const actif = herosActif();
       const raison = Plateau.raisonBlocage(g, etat, actif.x, actif.y, x, y);
       if (raison) return msg(raison);
+      // Piège connu sur la case : on propose de sauter (ou de descendre dans la fosse).
+      const piege = Plateau.piegeEn(etat, x, y);
+      if (piege && (piege.trouve || piege.declenche)) {
+        evenement = { genre: 'saut', piege: piege.id, depuis: [actif.x, actif.y], dir: [x - actif.x, y - actif.y] };
+        return dessiner();
+      }
       const surHeros = Plateau.autreHerosEn(etat, actif.id, x, y);
       if (surHeros && etat.tour.deplacement.restant === 1)
         return msg(`Dernière case : on ne peut pas s’arrêter sur la case de ${surHeros.nom}.`);
+      const depuis = [actif.x, actif.y];
       modifier(e => {
         const h = e.heros.find(k => k.id === actif.id);
         h.x = x; h.y = y;
         e.tour.deplacement.restant -= 1;
         if (e.tour.deplacement.restant <= 0) e.tour.deplacement = null;
       });
+      // Piège caché : il se déclenche sous les pieds du héros.
+      if (piege) return declencherPiege(piege.id, depuis, [x - depuis[0], y - depuis[1]]);
       msg(etat.tour.deplacement ? (surHeros ? `${actif.nom} passe la case de ${surHeros.nom}.` : '') : `${actif.nom} a utilisé tout son déplacement.`);
     }
 
@@ -530,7 +562,7 @@ const VuePlateau = (() => {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
-      fenetreActions = null; ciblage = false; combat = null; conclusion = null;
+      fenetreActions = null; ciblage = false; combat = null; conclusion = null; evenement = null;
       modifier(e => {
         e.tour = { numero: e.tour.numero, index: e.tour.index + 1 };
         if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
@@ -553,7 +585,7 @@ const VuePlateau = (() => {
 
     function porteProposee() {
       const h = herosActif();
-      if (!h || vueMJ || fenetreActions || ciblage || combat || conclusion) return null;
+      if (!h || vueMJ || fenetreActions || ciblage || combat || conclusion || evenement) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
@@ -653,7 +685,7 @@ const VuePlateau = (() => {
         const z = e.zargon, k = e.monstres.find(q => q.id === p.monstre);
         if (p.chemin.length) [k.x, k.y] = p.chemin[p.chemin.length - 1];
         if (p.cible) {
-          const tirage = Regles.lancer(Regles.valeurMonstre(caracs, k, 'attaque'));
+          const tirage = Regles.lancer(caracMonstre(k, 'attaque'));
           const cranes = Regles.compter(tirage, 'crane');
           if (cranes > 0) {
             z.defense = { monstre: k.id, heros: p.cible, tirage, cranes, cle: 'z' + Date.now() };
@@ -752,7 +784,7 @@ const VuePlateau = (() => {
       const h = herosActif();
       const m = etat.monstres.find(k => k.id === combat.monstre);
       const nom = infoMonstre(m.type).nom;
-      const tirage = Regles.lancer(Regles.valeurMonstre(caracs, m, 'defense'));
+      const tirage = Regles.lancer(caracMonstre(m, 'defense'));
       const noirs = Regles.compter(tirage, 'noir');
       const degats = Math.max(0, cranes - noirs);
       const vieAvant = m.corps ?? 1;
@@ -773,6 +805,272 @@ const VuePlateau = (() => {
       };
       msg('');
       dessiner();
+    }
+
+    /* ---------- Pièges, sauts, désamorçage et fouilles ----------
+       Les joueurs lancent eux-mêmes leurs dés et indiquent le résultat.
+       « Ce qui met fin au tour » (piège) est noté : un nouveau déplacement ou une
+       nouvelle action restent possibles, avec un avertissement (règle d'arbitrage). */
+
+    let evenement = null; // fenêtre en cours : piège, saut, désamorçage ou résultat de fouille
+
+    const NOMS_PIEGES = { fosse: 'fosse', bloc: 'bloc qui tombe', lance: 'piège à lance' };
+
+    // Termine le déplacement et note que le piège a mis fin au tour du héros.
+    function finParPiege(e) { e.tour.deplacement = null; e.tour.aBouge = true; e.tour.finForcee = true; }
+
+    function blesser(e, hid, n) {
+      const h = e.heros.find(k => k.id === hid);
+      h.corps = Math.max(0, (h.corps ?? 0) - n);
+      return h.corps;
+    }
+
+    // Le héros actif vient d'arriver sur un piège (caché, ou saut raté, ou désamorçage raté).
+    function declencherPiege(id, depuis, dir) {
+      const h = herosActif();
+      const p = etat.pieges.find(q => q.id === id);
+      const amb = cat => Ambiance.tirer(cat, { heros: h.nom });
+      if (p.type === 'fosse') {
+        let vie;
+        modifier(e => { const q = e.pieges.find(z => z.id === id); q.declenche = q.trouve = true; vie = blesser(e, h.id, 1); finParPiege(e); });
+        evenement = { genre: 'fin', titre: 'Une fosse !', ambiance: amb('piegeFosse'),
+          texte: `${h.nom} tombe dans la fosse et perd 1 point de Vie (reste ${vie}). Son tour s’arrête. Dans la fosse : un dé de combat de moins (attaque et défense).` };
+      } else if (p.type === 'lance') {
+        evenement = { genre: 'lance', piege: id, ambiance: amb('piegeLance') };
+      } else {
+        evenement = { genre: 'bloc', piege: id, depuis, dir, ambiance: amb('piegeBloc') };
+      }
+      dessiner();
+    }
+
+    function resoudreLance(crane) {
+      const h = herosActif(), id = evenement.piege;
+      let vie;
+      modifier(e => {
+        e.pieges = e.pieges.filter(z => z.id !== id); // la lance est partie : la case est sûre désormais
+        if (crane) { vie = blesser(e, h.id, 1); finParPiege(e); }
+      });
+      evenement = { genre: 'fin', titre: 'Piège à lance', ambiance: evenement.ambiance,
+        texte: crane ? `Touché ! ${h.nom} perd 1 point de Vie (reste ${vie}). Son tour s’arrête.`
+          : `${h.nom} esquive la lance et peut continuer son déplacement.` };
+      dessiner();
+    }
+
+    function resoudreBloc(cranes) {
+      const h = herosActif(), ev = evenement;
+      let vie;
+      modifier(e => { const q = e.pieges.find(z => z.id === ev.piege); q.declenche = q.trouve = true; vie = blesser(e, h.id, cranes); finParPiege(e); });
+      evenement = { ...ev, genre: 'blocChoix', degats: cranes, vie };
+      dessiner();
+    }
+
+    // Après la chute du bloc : le héros va en avant ou en arrière, sur une case libre.
+    function casesApresBloc(ev) {
+      const p = etat.pieges.find(q => q.id === ev.piege);
+      const h = herosActif();
+      const libre = ([x, y]) => x >= 0 && y >= 0 && x < L && y < H && !Plateau.raisonBlocage(g, etat, p.x, p.y, x, y) && !Plateau.autreHerosEn(etat, h.id, x, y);
+      const avant = [p.x + ev.dir[0], p.y + ev.dir[1]];
+      const choix = [];
+      if (libre(avant)) choix.push({ nom: 'En avant', c: avant });
+      if (libre(ev.depuis)) choix.push({ nom: 'En arrière', c: ev.depuis });
+      if (!choix.length) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (libre([p.x + dx, p.y + dy])) choix.push({ nom: 'Sur le côté', c: [p.x + dx, p.y + dy] });
+      return choix;
+    }
+
+    function allerApresBloc(c) {
+      const h = herosActif(), ev = evenement;
+      modifier(e => { const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = c; });
+      evenement = { genre: 'fin', titre: 'Éboulement', ambiance: ev.ambiance,
+        texte: `${ev.degats ? `${h.nom} perd ${ev.degats} point${ev.degats > 1 ? 's' : ''} de Vie (reste ${ev.vie}).` : `${h.nom} s’en tire sans une égratignure.`}`
+          + ' La case est bloquée pour toujours. Son tour s’arrête.' };
+      dessiner();
+    }
+
+    // Saut par-dessus un piège connu : 2 cases de déplacement et une case libre au-delà.
+    function infosSaut(ev) {
+      const h = herosActif();
+      const p = etat.pieges.find(q => q.id === ev.piege);
+      const au_dela = [p.x + ev.dir[0], p.y + ev.dir[1]];
+      const restant = etat.tour.deplacement?.restant || 0;
+      const libre = !Plateau.raisonBlocage(g, etat, p.x, p.y, ...au_dela) && !Plateau.autreHerosEn(etat, h.id, ...au_dela);
+      return { p, au_dela, possible: restant >= 2 && libre && !(p.type === 'bloc' && p.declenche), restant, libre };
+    }
+
+    function sauter(crane) {
+      const h = herosActif(), ev = evenement;
+      const { p, au_dela } = infosSaut(ev);
+      if (!crane) {
+        modifier(e => {
+          const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = au_dela;
+          e.tour.deplacement.restant -= 2;
+          if (e.tour.deplacement.restant <= 0) e.tour.deplacement = null;
+        });
+        evenement = null;
+        msg(`${h.nom} saute par-dessus le piège !`);
+        return dessiner();
+      }
+      // Saut raté : le héros tombe sur le piège, qui se déclenche.
+      modifier(e => { const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y]; });
+      if (p.type === 'lance') { evenement = { genre: 'lance', piege: p.id, ambiance: Ambiance.tirer('piegeLance', { heros: h.nom }) }; return resoudreLance(true); }
+      if (p.type === 'fosse' && p.declenche) {
+        let vie;
+        modifier(e => { vie = blesser(e, h.id, 1); finParPiege(e); });
+        evenement = { genre: 'fin', titre: 'Saut manqué', ambiance: Ambiance.tirer('piegeFosse', { heros: h.nom }),
+          texte: `${h.nom} retombe au fond de la fosse et perd 1 point de Vie (reste ${vie}). Son tour s’arrête.` };
+        return dessiner();
+      }
+      declencherPiege(p.id, ev.depuis, ev.dir);
+    }
+
+    // Descendre volontairement dans une fosse ouverte (1 point de Vie).
+    function descendreFosse() {
+      const h = herosActif();
+      const { p } = infosSaut(evenement);
+      let vie;
+      modifier(e => { const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y]; vie = blesser(e, h.id, 1); finParPiege(e); });
+      evenement = { genre: 'fin', titre: 'Dans la fosse', ambiance: '', texte: `${h.nom} descend dans la fosse et perd 1 point de Vie (reste ${vie}). Son tour s’arrête.` };
+      dessiner();
+    }
+
+    // Marcher exprès sur un piège connu mais pas encore déclenché.
+    function marcherSurPiege() {
+      const h = herosActif(), ev = evenement;
+      const { p } = infosSaut(ev);
+      modifier(e => {
+        const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y];
+        e.tour.deplacement.restant -= 1;
+        if (e.tour.deplacement.restant <= 0) e.tour.deplacement = null;
+      });
+      declencherPiege(p.id, ev.depuis, ev.dir);
+    }
+
+    /* Désamorcer (action) : piège repéré sur une case voisine ; il faut une trousse à
+       outils, ou être le nain. Le héros s'avance sur le piège et lance 1 dé :
+       échec sur un crâne (trousse) ou sur un bouclier noir (nain). */
+    function piegesDesamorcables() {
+      const h = herosActif();
+      if (!h) return [];
+      const nain = (h.classe || h.id) === 'nain';
+      const trousse = (h.inventaire || []).some(o => /trousse/i.test(o.nom));
+      if (!nain && !trousse) return [];
+      return (etat.pieges || []).filter(p => p.trouve && !p.declenche
+        && Math.abs(p.x - h.x) + Math.abs(p.y - h.y) === 1
+        && Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, p.x, p.y)));
+    }
+
+    function resoudreDesamorcage(face) {
+      const h = herosActif(), ev = evenement;
+      const nain = (h.classe || h.id) === 'nain';
+      const p = etat.pieges.find(q => q.id === ev.piege);
+      const echec = nain ? face === 'noir' : face === 'crane';
+      const depuis = [h.x, h.y], dir = [p.x - h.x, p.y - h.y];
+      modifier(e => {
+        if (e.tour.deplacement) e.tour.deplacement = null;
+        e.tour.actions = (e.tour.actions || 0) + 1;
+        const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y];
+        if (!echec) e.pieges = e.pieges.filter(z => z.id !== p.id);
+      });
+      if (!echec) {
+        evenement = { genre: 'fin', titre: 'Piège désamorcé', ambiance: Ambiance.tirer('desamorceOk', { heros: h.nom }),
+          texte: `Le piège (${NOMS_PIEGES[p.type]}) est désamorcé : la case est sûre.` };
+        return dessiner();
+      }
+      msg(Ambiance.tirer('desamorceRate', { heros: h.nom }));
+      if (p.type === 'lance') { evenement = { genre: 'lance', piege: p.id, ambiance: '' }; return resoudreLance(true); }
+      declencherPiege(p.id, depuis, dir);
+    }
+
+    // Fouilles (action) : portes secrètes ou pièges, sur les cases visibles de la pièce ou du couloir.
+    function monstreVisible() {
+      return etat.monstres.some(m => etat.revele.includes(Plateau.idx(L, m.x, m.y)));
+    }
+
+    function fouiller(genre) {
+      const h = herosActif();
+      const avert = [];
+      if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
+      if (monstreVisible()) avert.push('Un monstre est visible : la règle interdit de fouiller.');
+      const portee = Plateau.porteeDe(partie.reglages);
+      const trouves = genre === 'portes' ? Plateau.fouillerPortes(g, etat, h, portee) : Plateau.fouillerPieges(g, etat, h, portee);
+      modifier(e => {
+        if (e.tour.deplacement) e.tour.deplacement = null;
+        e.tour.actions = (e.tour.actions || 0) + 1;
+        if (genre === 'portes') e.secretesTrouvees.push(...trouves);
+        else for (const id of trouves) e.pieges.find(z => z.id === id).trouve = true;
+      });
+      const n = trouves.length;
+      const texte = genre === 'portes'
+        ? (n ? `${n} porte${n > 1 ? 's' : ''} secrète${n > 1 ? 's' : ''} découverte${n > 1 ? 's' : ''} !` : 'Aucune porte secrète ici.')
+        : (n ? `${n} piège${n > 1 ? 's' : ''} repéré${n > 1 ? 's' : ''} : ${trouves.map(id => NOMS_PIEGES[etat.pieges.find(z => z.id === id).type]).join(', ')}.` : 'Aucun piège ici.');
+      evenement = {
+        genre: 'fin', titre: genre === 'portes' ? 'Fouille : portes secrètes' : 'Fouille : pièges',
+        texte, avertissement: avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '',
+        ambiance: Ambiance.tirer(n ? (genre === 'portes' ? 'fouillePorte' : 'fouillePiege') : 'fouilleRien', { heros: h.nom }),
+      };
+      dessiner();
+    }
+
+    // Contenu de la fenêtre d'un événement (dans dessinerModale).
+    function htmlEvenement() {
+      const h = herosActif();
+      if (!h) return '';
+      const ev = evenement;
+      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}</div>`;
+      const amb = ev.ambiance ? `<p class="ambiance grande">${echapperTexte(ev.ambiance)}</p>` : '';
+      if (ev.genre === 'fin') return `${tete}<p class="titre-zargon">${echapperTexte(ev.titre)}</p>${amb}
+        ${ev.avertissement ? `<p class="erreur petit">${echapperTexte(ev.avertissement)}</p>` : ''}
+        <p class="resultat">${echapperTexte(ev.texte)}</p>
+        <div class="choix"><button id="ev-ok" class="principal">OK</button></div>`;
+      if (ev.genre === 'lance') return `${tete}<p class="titre-zargon">Piège à lance !</p>${amb}
+        <p class="question">${h.nom} : lancez 1 dé de combat.</p>
+        <div class="choix"><button data-lance="1">💀 Crâne</button><button data-lance="0">Pas de crâne</button></div>`;
+      if (ev.genre === 'bloc') return `${tete}<p class="titre-zargon">Un bloc tombe !</p>${amb}
+        <p class="question">${h.nom} : lancez 3 dés de combat (pas de défense). Combien de crânes ?</p>
+        <div class="choix nombres">${[0, 1, 2, 3].map(n => `<button data-bloc="${n}">${n}</button>`).join('')}</div>`;
+      if (ev.genre === 'blocChoix') {
+        const choix = casesApresBloc(ev);
+        return `${tete}<p class="titre-zargon">Éboulement</p>
+          <p class="resultat">${ev.degats ? `${ev.degats} crâne${ev.degats > 1 ? 's' : ''} : ${h.nom} perd ${ev.degats} point${ev.degats > 1 ? 's' : ''} de Vie.` : 'Aucun crâne : pas de blessure.'}</p>
+          <p class="question">La case devient un mur. Où ${h.nom} se met-il à l’abri ?</p>
+          <div class="choix">${choix.map((c, k) => `<button data-abri="${k}">${c.nom}</button>`).join('') || '<span class="erreur">Aucune case libre : corrigez en vue MJ.</span><button id="ev-ok">OK</button>'}</div>`;
+      }
+      if (ev.genre === 'saut') {
+        const info = infosSaut(ev);
+        const p = info.p;
+        const nom = NOMS_PIEGES[p.type] + (p.declenche ? ' (ouverte)' : '');
+        return `${tete}<p class="titre-zargon">Piège connu : ${nom}</p>
+          ${info.possible ? `<p class="question">Sauter par-dessus : 2 cases de déplacement. Lancez 1 dé de combat — il ne faut pas de crâne.</p>
+              <div class="choix"><button data-saut="0" class="principal">Sauté (pas de crâne)</button><button data-saut="1">💀 Crâne</button></div>`
+            : `<p class="discret">${p.type === 'bloc' && p.declenche ? 'Un éboulement bloque le passage.' : `Pour sauter, il faut 2 cases de déplacement (il en reste ${info.restant}) et une case libre au-delà${info.libre ? '' : ' (elle ne l’est pas)'}.`}</p>`}
+          <div class="choix">
+            ${p.type === 'fosse' && p.declenche ? '<button id="ev-descendre">Descendre dans la fosse (1 point de Vie)</button>' : ''}
+            ${!p.declenche ? '<button id="ev-marcher">Marcher dessus quand même</button>' : ''}
+            <button id="ev-annuler">Annuler</button>
+          </div>`;
+      }
+      if (ev.genre === 'desarmer') {
+        const p = etat.pieges.find(q => q.id === ev.piege);
+        const nain = (h.classe || h.id) === 'nain';
+        return `${tete}<p class="titre-zargon">Désamorcer : ${NOMS_PIEGES[p.type]}</p>
+          <p class="question">${h.nom} s’avance sur le piège. Lancez 1 dé de combat : qu’obtenez-vous ?</p>
+          <p class="discret petit">Échec sur ${nain ? 'un bouclier noir (talent du nain)' : 'un crâne (trousse à outils)'}.</p>
+          <div class="choix"><button data-face="crane">💀 Crâne</button><button data-face="blanc">🛡️ Bouclier blanc</button><button data-face="noir">⚫ Bouclier noir</button></div>
+          <div class="choix"><button id="ev-annuler">Annuler</button></div>`;
+      }
+      return '';
+    }
+
+    function brancherEvenement(boite) {
+      const sur = (sel, f) => boite.querySelector(sel)?.addEventListener('click', f);
+      sur('#ev-ok', () => { evenement = null; dessiner(); });
+      sur('#ev-annuler', () => { evenement = null; msg(''); dessiner(); });
+      sur('#ev-descendre', descendreFosse);
+      sur('#ev-marcher', marcherSurPiege);
+      boite.querySelectorAll('[data-lance]').forEach(b => b.addEventListener('click', () => resoudreLance(b.dataset.lance === '1')));
+      boite.querySelectorAll('[data-bloc]').forEach(b => b.addEventListener('click', () => resoudreBloc(+b.dataset.bloc)));
+      boite.querySelectorAll('[data-abri]').forEach(b => b.addEventListener('click', () => allerApresBloc(casesApresBloc(evenement)[+b.dataset.abri].c)));
+      boite.querySelectorAll('[data-saut]').forEach(b => b.addEventListener('click', () => sauter(b.dataset.saut === '1')));
+      boite.querySelectorAll('[data-face]').forEach(b => b.addEventListener('click', () => resoudreDesamorcage(b.dataset.face)));
     }
 
     /* ---------- Fenêtres de combat ----------
@@ -901,10 +1199,14 @@ const VuePlateau = (() => {
           </div>`;
       }
 
+      else if (evenement && herosActif()) {
+        html = htmlEvenement();
+      }
       else if (fenetreActions && herosActif()) {
         // Fenêtre « Actions » : médaillon du héros, état du tour, choix possibles.
         const h = herosActif(), t = etat.tour;
         const cibles = ciblesAttaque();
+        const desamorcables = piegesDesamorcables();
         const fait = (t.actions || 0) >= 1;
         const entete = `<button class="icone fermer-modale" id="md-fermer" aria-label="Fermer">✕</button>
           <div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}</div>`;
@@ -923,11 +1225,16 @@ const VuePlateau = (() => {
                 ? '<button id="md-terminer-depl">Terminer le déplacement</button>'
                 : `<button id="md-deplacer" class="${t.aBouge ? '' : 'principal'}">${t.aBouge ? 'Se déplacer encore ⚠' : 'Se déplacer'}</button>`}
             </div>
-            <h3 class="titre-section">Actions</h3>
+            ${t.finForcee ? `<p class="erreur petit">⚠ Un piège a mis fin au tour de ${echapperTexte(h.nom)} : normalement, il ne fait plus rien ce tour-ci.</p>` : ''}
+            <h3 class="titre-section">Actions${fait ? ' ⚠' : ''}</h3>
             <div class="choix">
-              ${cibles.length ? `<button id="md-attaquer" class="${fait ? '' : 'principal'}">Attaquer${fait ? ' ⚠' : ''}</button>` : ''}
+              ${cibles.length ? `<button id="md-attaquer" class="${fait ? '' : 'principal'}">Attaquer</button>` : ''}
+              <button id="md-fouille-portes">Fouiller : portes secrètes</button>
+              <button id="md-fouille-pieges">Fouiller : pièges</button>
+              ${desamorcables.length ? '<button id="md-desamorcer">Désamorcer le piège</button>' : ''}
             </div>
-            ${cibles.length ? '' : '<p class="discret petit">Aucune action possible ici pour l’instant (pas de monstre au contact). Fouilles et sorts arriveront aux prochaines étapes.</p>'}
+            ${monstreVisible() ? '<p class="discret petit">Un monstre est visible : les règles interdisent de fouiller (l’application vous laissera faire, avec un avertissement).</p>' : ''}
+            <p class="discret petit">La fouille de trésor et les sorts arriveront aux prochaines étapes.</p>
             <div class="choix"><button id="md-fiche">Fiche de ${echapperTexte(h.nom)}</button></div>`;
         }
       }
@@ -945,10 +1252,14 @@ const VuePlateau = (() => {
       sur('#md-retour-actions', () => { fenetreActions = 'menu'; msg(''); dessiner(); });
       sur('#md-terminer-depl', terminerDeplacement);
       sur('#md-attaquer', () => { fenetreActions = null; commencerAttaque(); });
+      sur('#md-fouille-portes', () => { fenetreActions = null; fouiller('portes'); });
+      sur('#md-fouille-pieges', () => { fenetreActions = null; fouiller('pieges'); });
+      sur('#md-desamorcer', () => { fenetreActions = null; evenement = { genre: 'desarmer', piege: piegesDesamorcables()[0].id }; dessiner(); });
       sur('#md-fiche', () => { fenetreActions = null; dessiner(); ouvrirFiche(herosActif().id); });
       boite.querySelectorAll('[data-total]').forEach(b => b.addEventListener('click', () => choisirTotal(+b.dataset.total)));
       boite.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
       boite.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
+      if (evenement) brancherEvenement(boite);
       animerDes(boite);
     }
 

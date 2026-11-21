@@ -403,3 +403,13 @@ button.petit-bouton { min-width: 40px; min-height: 40px; font-size: 1rem; }
 .carte-modale .titre-section { margin: 14px 0 4px; font-size: 0.95rem; color: var(--or); text-transform: uppercase; letter-spacing: 0.06em; }
 .carte-modale .choix button { min-width: 180px; }
 .carte-modale .choix.nombres button { min-width: 52px; }
+
+/* ---------- Pièges (v0.13.0) ---------- */
+.piege rect { fill: rgba(255, 196, 64, 0.18); stroke: #ffc440; stroke-width: 2; stroke-dasharray: 4 3; }
+.piege .symbole-piege { fill: #ffd76a; font-size: 18px; font-weight: 700; text-anchor: middle; pointer-events: none; }
+.piege.cache rect { fill: rgba(255, 90, 74, 0.12); stroke: #ff5a4a; }
+.piege.cache .symbole-piege { fill: #ff8a7a; }
+.piege-fosse.declenche rect { fill: #050403; stroke: #3a2f22; stroke-width: 3; stroke-dasharray: none; }
+.piege-bloc.declenche rect { fill: #6e6a62; stroke: #2b2620; stroke-width: 2; stroke-dasharray: none; }
+.piege { pointer-events: none; }
+.piege-bloc.declenche rect { fill: #57524a; stroke: #1b1712; stroke-width: 3; }

@@ -42,6 +42,8 @@ const Plateau = (() => {
   // ou si une porte ouverte les relie.
   function ouvert(g, etat, i, j) {
     if (g.zones[j] === '#' || g.zones[i] === '#') return false;
+    // Un bloc tombé est un mur : on ne passe pas et on ne voit pas à travers.
+    if (eboulementEn(etat, j % g.L, Math.floor(j / g.L)) || eboulementEn(etat, i % g.L, Math.floor(i / g.L))) return false;
     if (g.zones[i] === g.zones[j]) return true;
     const p = g.portesParBord[bord(i, j)];
     return !!p && etat.portesOuvertes.includes(p.id);
@@ -211,6 +213,7 @@ const Plateau = (() => {
       const p = g.portesParBord[bord(i, j)];
       return p && porteVisible(etat, p) ? 'La porte est fermée : ouvrez-la d’abord.' : 'Un mur bloque le passage.';
     }
+    if (eboulementEn(etat, nx, ny)) return 'Un éboulement bloque le passage pour toujours.';
     if (etat.monstres.some(m => m.x === nx && m.y === ny)) return 'Un monstre bloque le passage.';
     const meuble = meubleEn(g, nx, ny);
     if (meuble) return `${meuble.nom} : on ne peut pas passer par-dessus.`;
@@ -232,6 +235,7 @@ const Plateau = (() => {
     if (!ouvert(g, etat, i, j)) return false;
     const x = j % g.L, y = Math.floor(j / g.L);
     if (meubleEn(g, x, y)) return false;
+    if (eboulementEn(etat, x, y)) return false;
     if (etat.heros.some(h => h.x === x && h.y === y && h.corps !== 0)) return false;
     return true;
   }
@@ -292,6 +296,50 @@ const Plateau = (() => {
     };
   }
 
+  /* ---------- Pièges et fouilles ---------- */
+
+  // Piège encore actif sur la case (pas désamorcé, pas une lance déjà partie), ou undefined.
+  function piegeEn(etat, x, y) {
+    return (etat.pieges || []).find(p => p.x === x && p.y === y);
+  }
+  // Bloc tombé : la case est bloquée pour toujours (héros et monstres).
+  function eboulementEn(etat, x, y) {
+    return (etat.pieges || []).some(p => p.type === 'bloc' && p.declenche && p.x === x && p.y === y);
+  }
+  // Fosse ouverte sur la case : −1 dé d'attaque et de défense (minimum 1) pour qui s'y trouve.
+  function fosseEn(etat, x, y) {
+    return (etat.pieges || []).some(p => p.type === 'fosse' && p.declenche && p.x === x && p.y === y);
+  }
+
+  // Cases concernées par une fouille du héros (principe de visibilité) :
+  // dans une pièce, toute la pièce ; dans un couloir, les cases de couloir
+  // qu'il voit en ce moment (ligne de vue et portée).
+  function casesFouillables(g, etat, h, portee = Infinity) {
+    const i = idx(g.L, h.x, h.y), z = g.zones[i];
+    if (estPiece(z)) return new Set(g.pieces[z]);
+    const res = new Set([i]);
+    g.zones.forEach((zc, c) => {
+      if (zc !== '.') return;
+      const cx = c % g.L, cy = Math.floor(c / g.L);
+      if (Math.hypot(cx - h.x, cy - h.y) > portee + 1e-9) return;
+      if (ligneDeVue(g, etat, h.x, h.y, cx, cy)) res.add(c);
+    });
+    return res;
+  }
+
+  // Portes secrètes trouvées par la fouille (une des deux cases dans la zone fouillée).
+  function fouillerPortes(g, etat, h, portee) {
+    const zone = casesFouillables(g, etat, h, portee);
+    return (g.quete.portes || []).filter(p => p.secrete && !etat.secretesTrouvees.includes(p.id)
+      && [p.a, p.b].some(([x, y]) => zone.has(idx(g.L, x, y)))).map(p => p.id);
+  }
+
+  // Pièges repérés par la fouille (pas encore connus, dans la zone fouillée).
+  function fouillerPieges(g, etat, h, portee) {
+    const zone = casesFouillables(g, etat, h, portee);
+    return (etat.pieges || []).filter(p => !p.trouve && !p.declenche && zone.has(idx(g.L, p.x, p.y))).map(p => p.id);
+  }
+
   /* ---------- Réglages de vision ---------- */
 
   // Portée de vue dans les couloirs, d'après les réglages de la partie.
@@ -330,6 +378,8 @@ const Plateau = (() => {
     const etat = {
       heros: membres.map((h, n) => ({ ...h, x: quete.departs[n]?.[0] ?? null, y: quete.departs[n]?.[1] ?? null })),
       monstres: (quete.monstres || []).map(m => ({ ...m })),
+      // Pièges : trouve = repéré par une fouille ; declenche = tombé dedans (fosse, bloc).
+      pieges: (quete.pieges || []).map(p => ({ ...p, trouve: false, declenche: false })),
       portesOuvertes: [],
       secretesTrouvees: [],
       revele: [],
@@ -378,10 +428,15 @@ const Plateau = (() => {
       idUnique(m, 'monstre');
       if (!libre(m.x, m.y)) err.push(`monstre ${m.id} : case hors du plateau ou dans la roche`);
     }
+    for (const p of q.pieges || []) {
+      idUnique(p, 'piège');
+      if (!['fosse', 'bloc', 'lance'].includes(p.type)) err.push(`piège ${p.id} : type inconnu « ${p.type} » (fosse, bloc ou lance)`);
+      if (!libre(p.x, p.y)) err.push(`piège ${p.id} : case hors du plateau ou dans la roche`);
+    }
     if (!Array.isArray(q.departs) || q.departs.length < 1) err.push('aucune case de départ pour les héros');
     else q.departs.forEach(([x, y], n) => { if (!libre(x, y)) err.push(`départ n° ${n + 1} : case invalide`); });
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, HEROS };
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, piegeEn, eboulementEn, fosseEn, casesFouillables, fouillerPortes, fouillerPieges, HEROS };
 })();

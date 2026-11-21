@@ -129,6 +129,51 @@ const Ambiance = (() => {
       '{monstre} encaisse sans broncher.',
       'Raté ! {monstre} semble presque amusé.',
     ],
+    // Fouilles
+    fouilleRien: [
+      '{heros} tâte les murs, gratte les joints… rien.',
+      '{heros} inspecte chaque recoin. Pierre ordinaire, poussière ordinaire.',
+      'Rien d’anormal. Mais l’impression d’être observé ne s’en va pas.',
+      '{heros} se relève, les mains noires de poussière, bredouille.',
+      'Une araignée dérangée détale. C’est tout ce que {heros} trouve.',
+    ],
+    fouillePorte: [
+      'Une pierre sonne creux sous les doigts de {heros}… Un passage secret !',
+      '{heros} remarque un léger courant d’air entre deux pierres. Une porte dérobée !',
+      'Un déclic : un pan de mur pivote sous la main de {heros}.',
+      '{heros} repère des traces d’usure sur le sol, devant un mur trop parfait…',
+    ],
+    fouillePiege: [
+      '{heros} s’arrête net : cette dalle ne lui inspire aucune confiance.',
+      'Un fil, presque invisible, tendu au ras du sol… {heros} l’a vu à temps.',
+      'Le plafond est fissuré d’une drôle de façon. Mieux vaut ne pas passer dessous.',
+      '{heros} sourit : celui qui a posé ce piège n’était pas très soigneux.',
+    ],
+    // Pièges qui se déclenchent
+    piegeFosse: [
+      'Le sol se dérobe sous les pieds de {heros} !',
+      'Un craquement, puis la chute : {heros} tombe dans une fosse.',
+      'La dalle bascule. {heros} dégringole au fond d’un trou.',
+    ],
+    piegeBloc: [
+      'Un grondement au-dessus de {heros}… le plafond s’effondre !',
+      'Des pierres pleuvent : un bloc s’abat dans un fracas assourdissant.',
+      'La voûte cède. {heros} plonge pour éviter l’éboulement.',
+    ],
+    piegeLance: [
+      'Un déclic : une lance jaillit du mur vers {heros} !',
+      'Un sifflement — une pointe d’acier surgit du sol.',
+      '{heros} entend le mécanisme trop tard : une lance fuse !',
+    ],
+    desamorceOk: [
+      'Un dernier tour de main : {heros} bloque le mécanisme. Le piège est inoffensif.',
+      '{heros} essuie son front. Le piège ne fera plus de victime.',
+      'Avec une patience d’horloger, {heros} neutralise le piège.',
+    ],
+    desamorceRate: [
+      'Un faux mouvement… le piège se déclenche sous les mains de {heros} !',
+      'Le mécanisme résiste, puis claque : raté !',
+    ],
     // Un monstre est vaincu (en plus des messages propres à chaque type, plus bas)
     mort: [
       '{monstre} s’effondre dans un dernier râle.',

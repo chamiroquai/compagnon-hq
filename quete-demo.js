@@ -74,6 +74,13 @@ const QUETE_DEMO = {
     { id: 'm4', type: 'tombeau', nom: 'Tombeau', x: 17, y: 11, l: 1, h: 2 },
     { id: 'm5', type: 'cheminee', nom: 'Cheminée', x: 2, y: 17, l: 3, h: 1 },
   ],
+  // Pièges : fosse, bloc (qui tombe) ou lance. Cachés tant qu'une fouille ne les a pas repérés.
+  pieges: [
+    { id: 't1', type: 'lance', x: 12, y: 2 },
+    { id: 't2', type: 'fosse', x: 6, y: 9 },
+    { id: 't3', type: 'bloc', x: 20, y: 5 },
+    { id: 't4', type: 'fosse', x: 2, y: 12 },
+  ],
   // Monstres : type, case. Une figurine peut avoir ses propres caractéristiques,
   // ex. { type: 'sorcierEffroi', x, y, nom: '…', caracs: { deplacement, attaque, defense, corps, esprit } }.
   monstres: [
