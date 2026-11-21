@@ -102,3 +102,57 @@ textarea { resize: vertical; }
 }
 .onglets button .ico { font-size: 1.35rem; }
 .onglets button.actif { color: var(--or); }
+
+/* ---------- Plateau ---------- */
+.carte-plateau { padding: 12px; }
+.barre-plateau { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.barre-plateau .espace { flex: 1; }
+.barre-plateau button.actif { background: #5a2f6e; border-color: #b47bd0; }
+.barre-plateau button:disabled { opacity: 0.4; }
+.message-plateau { height: 2.9em; overflow-y: auto; margin: 8px 2px; color: var(--or); }
+.cadre-plateau {
+  overflow: auto; -webkit-overflow-scrolling: touch;
+  max-height: 72vh; border-radius: 8px; background: #000;
+}
+.cadre-plateau svg { display: block; }
+.aide { margin-top: 10px; }
+.aide summary { cursor: pointer; color: var(--discret); }
+.fin-quete { margin-top: 10px; }
+
+/* Cases */
+.case.c-couloir { fill: #4a4035; stroke: #3a3229; stroke-width: 1; }
+.case.c-piece { fill: #7a6649; stroke: #6a583e; stroke-width: 1; }
+.case.c-roche { fill: #15110d; }
+.murs line { stroke: #0b0907; stroke-width: 5; stroke-linecap: square; }
+.contour { fill: none; stroke: #0b0907; stroke-width: 6; }
+
+/* Escalier et mobilier */
+.escalier rect { fill: #8f8a80; stroke: #2b2620; stroke-width: 2; }
+.escalier line { stroke: #2b2620; stroke-width: 3; }
+.mobilier rect { fill: #5b3b22; stroke: #2a1a0e; stroke-width: 2; }
+.mobilier.m-tombeau rect { fill: #6d6d6d; }
+.mobilier.m-cheminee rect { fill: #8a3a20; }
+.etiquette { fill: #f1e2c4; font-size: 11px; text-anchor: middle; pointer-events: none; }
+
+/* Portes */
+.porte rect { fill: #a5652a; stroke: #2a1a0e; stroke-width: 2; }
+.porte.ouverte rect:first-child { fill: none; stroke: #e0b060; stroke-dasharray: 3 3; }
+.porte.secrete rect:first-child { fill: none; stroke: #c080ff; stroke-width: 3; stroke-dasharray: 4 3; }
+.porte .zone-tactile { fill: transparent; stroke: none; }
+
+/* Pions */
+.pion text { font-size: 15px; font-weight: 700; text-anchor: middle; pointer-events: none; }
+.heros circle { stroke: #1b1712; stroke-width: 2; }
+.heros text { fill: #fff; }
+.h-barbare circle { fill: #b0352a; }
+.h-nain circle { fill: #c08a1e; }
+.h-elfe circle { fill: #2f8a4a; }
+.h-enchanteur circle { fill: #2c5aa8; }
+.heros.choisi circle { stroke: #ffe28a; stroke-width: 5; }
+.monstre rect { fill: #262626; stroke: #9bd16a; stroke-width: 2; }
+.monstre text { fill: #c8f0a0; }
+.monstre.cache { opacity: 0.55; }
+
+/* Brouillard : noir pour les joueurs, assombri en vue MJ */
+.brouillard rect { fill: #000; pointer-events: none; }
+svg.mj .brouillard rect { fill-opacity: 0.55; }

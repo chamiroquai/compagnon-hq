@@ -1,10 +1,10 @@
-/* app.js — Interface du Compagnon de quête (étape 2 : squelette).
+/* app.js — Interface du Compagnon de quête (étape 3 : plateau et brouillard).
    Contenu : liste des parties, notes de partie, sauvegarde et restauration
    en fichier JSON, installation hors ligne et mises à jour.
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.1.0';
+const VERSION_APP = '0.2.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -100,9 +100,14 @@ async function afficherPartie(id) {
   $('#btn-retour').hidden = false;
 
   vue.innerHTML = `
-    <section class="carte">
-      <h2>Plateau</h2>
-      <p class="discret">Le plateau de jeu arrivera à l’étape 3.</p>
+    <section class="carte carte-plateau">
+      <h2>${partie.quete ? echapper(partie.quete.titre) : 'Plateau'}</h2>
+      <div id="zone-plateau">
+        ${partie.quete ? '' : `
+          <p class="discret">Aucune quête en cours dans cette partie.</p>
+          <button id="btn-demo" class="principal">Commencer la quête de démonstration</button>`}
+      </div>
+      ${partie.quete ? '<div class="ligne fin-quete"><button id="btn-abandon" class="danger">Abandonner la quête</button></div>' : ''}
     </section>
     <section class="carte">
       <h2>Notes de partie</h2>
@@ -117,6 +122,29 @@ async function afficherPartie(id) {
         <button id="btn-supprimer" class="danger">Supprimer</button>
       </div>
     </section>`;
+
+  // Plateau : démarrer la quête de démonstration, ou afficher la quête en cours.
+  const enregistrerPartie = async () => {
+    partie.modifieeLe = new Date().toISOString();
+    await Stockage.enregistrerPartie(partie);
+  };
+  if (partie.quete) {
+    VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie);
+    $('#btn-abandon').addEventListener('click', async () => {
+      if (!confirm('Abandonner la quête en cours ? Les héros, portes et cases dévoilées seront effacés (les notes restent).')) return;
+      delete partie.quete; delete partie.etat;
+      await enregistrerPartie();
+      afficherPartie(id);
+    });
+  } else {
+    $('#btn-demo').addEventListener('click', async () => {
+      // Copie de la quête dans la partie : la partie reste lisible même si la quête change plus tard.
+      partie.quete = JSON.parse(JSON.stringify(QUETE_DEMO));
+      partie.etat = Plateau.etatInitial(partie.quete);
+      await enregistrerPartie();
+      afficherPartie(id);
+    });
+  }
 
   // Enregistre les notes peu après la dernière frappe.
   let minuterie = null;

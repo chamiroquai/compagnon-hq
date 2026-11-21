@@ -1,0 +1,294 @@
+/* vue-plateau.js — Dessin du plateau (SVG) et gestes du joueur.
+   Étape 3 : affichage, brouillard, portes, vue MJ, annulation.
+   Le déplacement est LIBRE pour l'instant (pour tester le brouillard) :
+   les dés et le déplacement case par case arrivent à l'étape 4. */
+'use strict';
+
+const VuePlateau = (() => {
+  const T = 40; // taille d'une case en unités du dessin
+  const NS = 'http://www.w3.org/2000/svg';
+
+  const MONSTRES = {
+    gobelin: { nom: 'Gobelin', court: 'Go' },
+    orque: { nom: 'Orque', court: 'Or' },
+    abomination: { nom: 'Abomination', court: 'Ab' },
+    guerrierEffroi: { nom: 'Guerrier de l’Effroi', court: 'GE' },
+    gargouille: { nom: 'Gargouille', court: 'Ga' },
+    squelette: { nom: 'Squelette', court: 'Sq' },
+    zombie: { nom: 'Zombie', court: 'Zo' },
+    momie: { nom: 'Momie', court: 'Mo' },
+    sorcierEffroi: { nom: 'Sorcier de l’Effroi', court: 'SE' },
+  };
+  const infoMonstre = type => MONSTRES[type] || { nom: type, court: String(type).slice(0, 2) };
+
+  // Crée un élément SVG avec ses attributs.
+  function el(nom, attrs = {}, parent) {
+    const e = document.createElementNS(NS, nom);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  /* Monte le plateau dans « conteneur ».
+     partie : la partie (avec .quete et .etat) ; enregistrer() : sauvegarde la partie. */
+  function monter(conteneur, partie, enregistrer) {
+    const quete = partie.quete;
+    const g = Plateau.geometrie(quete);
+    const { L, H } = g;
+    let etat = partie.etat;
+    let selection = null;        // id du héros sélectionné
+    let vueMJ = false;
+    let zoom = Number(localStorage.getItem('zoomPlateau')) || 1;
+    const historique = [];       // états précédents, pour « Annuler » (60 au plus)
+
+    conteneur.innerHTML = `
+      <div class="barre-plateau">
+        <button id="pl-annuler" disabled>↶ Annuler</button>
+        <button id="pl-mj" aria-pressed="false">Vue MJ</button>
+        <span class="espace"></span>
+        <button id="pl-moins" aria-label="Dézoomer">−</button>
+        <button id="pl-plus" aria-label="Zoomer">+</button>
+      </div>
+      <p id="pl-message" class="message-plateau"></p>
+      <div class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
+      <details class="aide">
+        <summary>Comment ça marche (étape 3)</summary>
+        <ul class="puces petit">
+          <li>Touchez un héros pour le choisir, puis une case pour l’y poser (déplacement libre, temporaire).</li>
+          <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
+          <li>Vue MJ : tout le plateau apparaît (le brouillard est assombri). Toucher une case dévoile ou cache sa pièce ;
+              toucher une porte secrète la rend trouvée.</li>
+        </ul>
+      </details>`;
+
+    const svg = conteneur.querySelector('#pl-svg');
+    const msg = texte => { conteneur.querySelector('#pl-message').textContent = texte || ''; };
+
+    function appliquerZoom() {
+      // 32 px par case au zoom 1 : le plateau tient sur la largeur d'un iPad à l'horizontale.
+      svg.setAttribute('width', Math.round(L * 32 * zoom));
+      svg.setAttribute('height', Math.round(H * 32 * zoom));
+    }
+
+    /* ---------- Modifier l'état ---------- */
+
+    // Toute modification passe par ici : mémorise l'état précédent, applique, dévoile, enregistre, redessine.
+    function modifier(action) {
+      const avant = JSON.stringify(etat);
+      const resultat = action(etat);
+      if (resultat === false) return; // action refusée : rien n'a changé
+      historique.push(avant);
+      if (historique.length > 60) historique.shift();
+      Plateau.devoiler(g, etat);
+      partie.etat = etat;
+      enregistrer();
+      dessiner();
+    }
+
+    function annuler() {
+      if (!historique.length) return;
+      etat = JSON.parse(historique.pop());
+      partie.etat = etat;
+      selection = null;
+      enregistrer();
+      msg('Action annulée.');
+      dessiner();
+    }
+
+    /* ---------- Dessin ---------- */
+
+    function dessiner() {
+      const vu = new Set(etat.revele);
+      const visible = i => vueMJ || vu.has(i);
+      svg.innerHTML = '';
+      svg.classList.toggle('mj', vueMJ);
+
+      // 1. Cases
+      const fond = el('g', {}, svg);
+      for (let i = 0; i < L * H; i++) {
+        const z = g.zones[i];
+        const cls = z === '#' ? 'c-roche' : z === '.' ? 'c-couloir' : 'c-piece';
+        el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T, height: T, class: 'case ' + cls, 'data-i': i }, fond);
+      }
+
+      // 2. Escalier
+      if (quete.escalier) {
+        const { x, y } = quete.escalier;
+        if (visible(Plateau.idx(L, x, y))) {
+          const gr = el('g', { class: 'escalier' }, svg);
+          el('rect', { x: x * T + 3, y: y * T + 3, width: 2 * T - 6, height: 2 * T - 6, rx: 4 }, gr);
+          for (let k = 1; k < 5; k++) el('line', { x1: x * T + 6, x2: x * T + 2 * T - 6, y1: y * T + k * 2 * T / 5, y2: y * T + k * 2 * T / 5 }, gr);
+        }
+      }
+
+      // 3. Mobilier
+      for (const m of quete.mobilier || []) {
+        if (!visible(Plateau.idx(L, m.x, m.y))) continue;
+        const gr = el('g', { class: 'mobilier m-' + m.type }, svg);
+        el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: (m.l || 1) * T - 8, height: (m.h || 1) * T - 8, rx: 3 }, gr);
+        const t = el('text', { x: (m.x + (m.l || 1) / 2) * T, y: (m.y + (m.h || 1) / 2) * T + 4, class: 'etiquette' }, gr);
+        t.textContent = (m.l || 1) > 1 || (m.h || 1) > 1 ? m.nom : m.nom.slice(0, 3);
+      }
+
+      // 4. Murs (traits épais sur les bords entre zones différentes)
+      const murs = el('g', { class: 'murs' }, svg);
+      for (let y = 0; y < H; y++) for (let x = 0; x < L; x++) {
+        const i = Plateau.idx(L, x, y);
+        if (x + 1 < L) {
+          const j = i + 1;
+          if (Plateau.mur(g, i, j) && (visible(i) || visible(j)))
+            el('line', { x1: (x + 1) * T, x2: (x + 1) * T, y1: y * T, y2: (y + 1) * T }, murs);
+        }
+        if (y + 1 < H) {
+          const j = i + L;
+          if (Plateau.mur(g, i, j) && (visible(i) || visible(j)))
+            el('line', { x1: x * T, x2: (x + 1) * T, y1: (y + 1) * T, y2: (y + 1) * T }, murs);
+        }
+      }
+      // Contour du plateau
+      el('rect', { x: 0, y: 0, width: L * T, height: H * T, class: 'contour' }, svg);
+
+      // 5. Portes
+      for (const p of quete.portes || []) {
+        const ia = Plateau.idx(L, ...p.a), ib = Plateau.idx(L, ...p.b);
+        const trouvee = Plateau.porteVisible(etat, p);
+        if (!vueMJ && (!trouvee || (!vu.has(ia) && !vu.has(ib)))) continue;
+        const ouverte = etat.portesOuvertes.includes(p.id);
+        const horizontale = p.a[1] !== p.b[1]; // les cases sont l'une au-dessus de l'autre
+        const cx = (Math.max(p.a[0], p.b[0]) + (horizontale ? 0.5 : 0)) * T;
+        const cy = (Math.max(p.a[1], p.b[1]) + (horizontale ? 0 : 0.5)) * T;
+        const w = horizontale ? T * 0.8 : T * 0.3, h = horizontale ? T * 0.3 : T * 0.8;
+        const cls = 'porte' + (ouverte ? ' ouverte' : '') + (!trouvee ? ' secrete' : '');
+        const gr = el('g', { class: cls, 'data-porte': p.id }, svg);
+        el('rect', { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: 2 }, gr);
+        // Zone tactile : toute la longueur de la porte, mais peu épaisse,
+        // pour ne pas voler les touchers destinés aux cases voisines.
+        const tw = horizontale ? T : T * 0.5, th = horizontale ? T * 0.5 : T;
+        el('rect', { x: cx - tw / 2, y: cy - th / 2, width: tw, height: th, class: 'zone-tactile' }, gr);
+      }
+
+      // 6. Monstres (seulement sur les cases dévoilées)
+      for (const m of etat.monstres) {
+        if (!visible(Plateau.idx(L, m.x, m.y))) continue;
+        const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') }, svg);
+        el('rect', { x: m.x * T + 5, y: m.y * T + 5, width: T - 10, height: T - 10, rx: 5 }, gr);
+        const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
+        t.textContent = infoMonstre(m.type).court;
+      }
+
+      // 7. Héros
+      for (const h of etat.heros) {
+        if (h.x == null) continue;
+        const gr = el('g', { class: 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : ''), 'data-heros': h.id }, svg);
+        el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 4 }, gr);
+        const t = el('text', { x: h.x * T + T / 2, y: h.y * T + T / 2 + 5 }, gr);
+        t.textContent = h.court;
+      }
+
+      // 8. Brouillard
+      const brouillard = el('g', { class: 'brouillard' }, svg);
+      for (let i = 0; i < L * H; i++) {
+        if (!vu.has(i)) el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T + 0.5, height: T + 0.5 }, brouillard);
+      }
+
+      conteneur.querySelector('#pl-annuler').disabled = historique.length === 0;
+      const bMJ = conteneur.querySelector('#pl-mj');
+      bMJ.classList.toggle('actif', vueMJ);
+      bMJ.setAttribute('aria-pressed', String(vueMJ));
+    }
+
+    /* ---------- Gestes ---------- */
+
+    function caseTouchee(evt) {
+      const pt = svg.createSVGPoint();
+      pt.x = evt.clientX; pt.y = evt.clientY;
+      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      const x = Math.floor(p.x / T), y = Math.floor(p.y / T);
+      return x >= 0 && y >= 0 && x < L && y < H ? { x, y } : null;
+    }
+
+    svg.addEventListener('click', evt => {
+      const porte = evt.target.closest('[data-porte]');
+      const heros = evt.target.closest('[data-heros]');
+      if (porte) return toucherPorte(porte.dataset.porte);
+      if (heros && !vueMJ) {
+        selection = selection === heros.dataset.heros ? null : heros.dataset.heros;
+        const h = etat.heros.find(k => k.id === selection);
+        msg(h ? `${h.nom} choisi : touchez une case pour l’y poser.` : '');
+        return dessiner();
+      }
+      const c = caseTouchee(evt);
+      if (!c) return;
+      if (vueMJ) return toucherCaseMJ(c);
+      if (selection) return poserHeros(c);
+      const m = etat.monstres.find(k => k.x === c.x && k.y === c.y);
+      if (m && etat.revele.includes(Plateau.idx(L, c.x, c.y))) msg(infoMonstre(m.type).nom + '.');
+    });
+
+    function poserHeros({ x, y }) {
+      const i = Plateau.idx(L, x, y);
+      const h = etat.heros.find(k => k.id === selection);
+      if (g.zones[i] === '#') return msg('Case de roche : impossible.');
+      if (!etat.revele.includes(i)) return msg('Cette case n’est pas encore dévoilée.');
+      if (etat.heros.some(k => k.x === x && k.y === y) || etat.monstres.some(k => k.x === x && k.y === y)) return msg('Case occupée.');
+      const meuble = (quete.mobilier || []).find(m => x >= m.x && x < m.x + (m.l || 1) && y >= m.y && y < m.y + (m.h || 1));
+      if (meuble) return msg(`${meuble.nom} : on ne peut pas s’y arrêter.`);
+      modifier(e => { const k = e.heros.find(z => z.id === h.id); k.x = x; k.y = y; });
+      selection = null;
+      msg(`${h.nom} déplacé.`);
+      dessiner();
+    }
+
+    function toucherPorte(id) {
+      const p = quete.portes.find(q => q.id === id);
+      if (vueMJ) {
+        if (p.secrete && !etat.secretesTrouvees.includes(id)) {
+          modifier(e => { e.secretesTrouvees.push(id); });
+          return msg('Porte secrète marquée comme trouvée.');
+        }
+        if (!etat.portesOuvertes.includes(id)) {
+          modifier(e => { e.portesOuvertes.push(id); });
+          return msg('Porte ouverte (vue MJ).');
+        }
+        return msg('Cette porte est déjà ouverte.');
+      }
+      if (etat.portesOuvertes.includes(id)) return msg('Cette porte est déjà ouverte.');
+      const h = Plateau.herosAdjacent(etat, p);
+      if (!h) return msg('Un héros doit se trouver sur une case qui touche la porte. (Vue MJ pour passer outre.)');
+      modifier(e => { e.portesOuvertes.push(id); });
+      msg(`${h.nom} ouvre la porte.`);
+    }
+
+    function toucherCaseMJ({ x, y }) {
+      // Pas de dévoilement automatique ici : le MJ décide.
+      const avant = JSON.stringify(etat);
+      const devoile = Plateau.basculerZone(g, etat, x, y);
+      historique.push(avant);
+      if (historique.length > 60) historique.shift();
+      partie.etat = etat;
+      enregistrer();
+      msg(devoile ? 'Zone dévoilée.' : 'Zone cachée.');
+      dessiner();
+    }
+
+    conteneur.querySelector('#pl-annuler').addEventListener('click', annuler);
+    conteneur.querySelector('#pl-mj').addEventListener('click', () => {
+      vueMJ = !vueMJ; selection = null;
+      msg(vueMJ ? 'Vue MJ : tout est visible. Les joueurs ne doivent pas regarder !' : 'Vue des joueurs.');
+      dessiner();
+    });
+    const changerZoom = f => {
+      zoom = Math.min(3, Math.max(0.6, Math.round(zoom * f * 10) / 10));
+      try { localStorage.setItem('zoomPlateau', zoom); } catch { }
+      appliquerZoom();
+    };
+    conteneur.querySelector('#pl-plus').addEventListener('click', () => changerZoom(1.25));
+    conteneur.querySelector('#pl-moins').addEventListener('click', () => changerZoom(0.8));
+
+    appliquerZoom();
+    dessiner();
+    msg(etat.portesOuvertes.length === 0 && quete.intro ? quete.intro : `Quête : ${quete.titre}`);
+  }
+
+  return { monter };
+})();
