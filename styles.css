@@ -304,3 +304,11 @@ table.caracs.petite { margin-top: 8px; }
 .jeu-haut .pastille { width: 14px; height: 14px; }
 .jeu-haut .panneau-tour { gap: 6px; }
 .jeu-haut .panneau-tour button { padding: 0 12px; }
+
+/* ---------- Tour de Zargon ---------- */
+.trajet rect { fill: rgba(255, 90, 74, 0.18); stroke: #ff5a4a; stroke-width: 2; stroke-dasharray: 4 3; pointer-events: none; }
+.trajet rect.arrivee { fill: rgba(255, 90, 74, 0.35); stroke-dasharray: none; }
+.trajet rect.monstre-actif { fill: none; stroke: #fff; stroke-width: 3; stroke-dasharray: none; }
+.trajet .heros-vise { fill: none; stroke: #ff5a4a; stroke-width: 4; pointer-events: none; }
+.portes-tactiles rect { fill: transparent; }
+.heros .anneau { pointer-events: none; }

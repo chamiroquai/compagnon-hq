@@ -222,6 +222,76 @@ const Plateau = (() => {
     return etat.heros.find(h => h.id !== idHeros && h.x === x && h.y === y);
   }
 
+  /* ---------- Déplacement des monstres (tour de Zargon) ---------- */
+
+  // Règles : une case à la fois, sans diagonale ; les monstres n'ouvrent pas les portes
+  // (porte fermée = mur) ; pas à travers la roche, les meubles ni les héros ;
+  // ils peuvent traverser un autre monstre mais pas s'arrêter sur sa case.
+  function passageMonstre(g, etat, i, j) {
+    if (g.zones[j] === '#') return false;
+    if (!ouvert(g, etat, i, j)) return false;
+    const x = j % g.L, y = Math.floor(j / g.L);
+    if (meubleEn(g, x, y)) return false;
+    if (etat.heros.some(h => h.x === x && h.y === y && h.corps !== 0)) return false;
+    return true;
+  }
+
+  function voisins(g, i) {
+    const x = i % g.L, y = Math.floor(i / g.L), v = [];
+    if (x > 0) v.push(i - 1);
+    if (x < g.L - 1) v.push(i + 1);
+    if (y > 0) v.push(i - g.L);
+    if (y < g.H - 1) v.push(i + g.L);
+    return v;
+  }
+
+  // Plan d'un monstre : vers la case libre la plus proche (en nombre de pas)
+  // d'où il peut attaquer un héros vivant (case voisine, sans mur entre eux).
+  // Renvoie { chemin: [[x,y]…] (sans la case de départ), cible: id du héros ou null,
+  //           atteint: true si le monstre pourra attaquer ce tour-ci }.
+  function planMonstre(g, etat, monstre, portee) {
+    const depart = idx(g.L, monstre.x, monstre.y);
+    const vivants = etat.heros.filter(h => h.x != null && h.corps !== 0);
+    const occupeeParMonstre = c => etat.monstres.some(m => m.id !== monstre.id && idx(g.L, m.x, m.y) === c);
+    // Héros qu'on peut attaquer depuis la case c (le plus faible d'abord).
+    const attaquables = c => vivants
+      .filter(h => voisins(g, c).includes(idx(g.L, h.x, h.y)) && ouvert(g, etat, c, idx(g.L, h.x, h.y)))
+      .sort((a, b) => (a.corps ?? 99) - (b.corps ?? 99));
+
+    // Déjà au contact : pas de déplacement.
+    const ici = attaquables(depart);
+    if (ici.length) return { chemin: [], cible: ici[0].id, atteint: true };
+
+    // Parcours en largeur : distance et case précédente pour chaque case atteignable.
+    const precedent = new Map([[depart, null]]);
+    const file = [depart];
+    let but = null;
+    while (file.length) {
+      const c = file.shift();
+      if (c !== depart && !occupeeParMonstre(c) && attaquables(c).length) { but = c; break; }
+      for (const v of voisins(g, c)) {
+        if (precedent.has(v) || !passageMonstre(g, etat, c, v)) continue;
+        precedent.set(v, c);
+        file.push(v);
+      }
+    }
+    if (but === null) return { chemin: [], cible: null, atteint: false };
+
+    // Chemin complet, puis limité à la portée ; on recule si la case d'arrivée est occupée.
+    const complet = [];
+    for (let c = but; c !== depart; c = precedent.get(c)) complet.unshift(c);
+    let n = Math.min(portee, complet.length);
+    while (n > 0 && occupeeParMonstre(complet[n - 1])) n--;
+    const chemin = complet.slice(0, n);
+    const arrivee = n ? chemin[n - 1] : depart;
+    const cibles = attaquables(arrivee);
+    return {
+      chemin: chemin.map(c => [c % g.L, Math.floor(c / g.L)]),
+      cible: cibles.length ? cibles[0].id : null,
+      atteint: cibles.length > 0,
+    };
+  }
+
   /* ---------- Réglages de vision ---------- */
 
   // Portée de vue dans les couloirs, d'après les réglages de la partie.
@@ -298,5 +368,5 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, HEROS };
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, HEROS };
 })();

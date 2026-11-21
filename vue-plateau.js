@@ -51,6 +51,8 @@ const VuePlateau = (() => {
       }
     }
     if (initialise) { partie.etat = etat; enregistrer(); }
+    // Partie arrêtée pendant le tour de Zargon avant la v0.8.0 : on prépare son tour.
+    if (etat.tour.index >= (etat.ordre || []).length && !etat.zargon) { demarrerZargon(etat); partie.etat = etat; enregistrer(); }
     let selection = null;        // id du héros sélectionné
     let vueMJ = false;
     let zoom = Number(localStorage.getItem('zoomJeu')) || 1; // 1 = plateau ajusté à l'écran
@@ -220,7 +222,8 @@ const VuePlateau = (() => {
       // Contour du plateau
       el('rect', { x: 0, y: 0, width: L * T, height: H * T, class: 'contour' }, svg);
 
-      // 5. Portes
+      // 5. Portes (leurs zones tactiles sont posées plus loin, au-dessus des pions)
+      const zonesPortes = [];
       for (const p of quete.portes || []) {
         const ia = Plateau.idx(L, ...p.a), ib = Plateau.idx(L, ...p.b);
         const trouvee = Plateau.porteVisible(etat, p);
@@ -236,7 +239,7 @@ const VuePlateau = (() => {
         // Zone tactile : toute la longueur de la porte, mais peu épaisse,
         // pour ne pas voler les touchers destinés aux cases voisines.
         const tw = horizontale ? T : T * 0.5, th = horizontale ? T * 0.5 : T;
-        el('rect', { x: cx - tw / 2, y: cy - th / 2, width: tw, height: th, class: 'zone-tactile' }, gr);
+        zonesPortes.push({ id: p.id, attrs: { x: cx - tw / 2, y: cy - th / 2, width: tw, height: th, class: 'zone-tactile' } });
       }
 
       // 6. Monstres (seulement sur les cases dévoilées)
@@ -247,6 +250,20 @@ const VuePlateau = (() => {
         el('rect', { x: m.x * T + 5, y: m.y * T + 5, width: T - 10, height: T - 10, rx: 5 }, gr);
         const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
         t.textContent = infoMonstre(m.type).court;
+      }
+
+      // 6 bis. Tour de Zargon : trajet prévu du monstre en cours (cases visibles seulement)
+      const plan = etat.zargon?.plan;
+      if (plan && !plan.erreur) {
+        const gz = el('g', { class: 'trajet' }, svg);
+        plan.chemin.forEach(([x, y], k) => {
+          if (!visible(Plateau.idx(L, x, y))) return;
+          el('rect', { x: x * T + 6, y: y * T + 6, width: T - 12, height: T - 12, rx: 6, class: k === plan.chemin.length - 1 ? 'arrivee' : '' }, gz);
+        });
+        const m = etat.monstres.find(k => k.id === plan.monstre);
+        if (m && visible(Plateau.idx(L, m.x, m.y))) el('rect', { x: m.x * T + 1, y: m.y * T + 1, width: T - 2, height: T - 2, rx: 7, class: 'monstre-actif' }, gz);
+        const h = plan.cible && etat.heros.find(k => k.id === plan.cible);
+        if (h) el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 1, class: 'heros-vise' }, gz);
       }
 
       // 7. Cases où le héros actif peut avancer (pendant un déplacement)
@@ -272,6 +289,11 @@ const VuePlateau = (() => {
         const t = el('text', { x: h.x * T + T / 2, y: h.y * T + T / 2 + 5 }, gr);
         t.textContent = h.court;
       }
+
+      // 8 bis. Zones tactiles des portes, au-dessus des pions : un héros posé
+      //        contre une porte ne doit pas empêcher de la toucher.
+      const couchePortes = el('g', { class: 'portes-tactiles' }, svg);
+      for (const z of zonesPortes) el('rect', z.attrs, el('g', { 'data-porte': z.id }, couchePortes));
 
       // 9. Brouillard
       const brouillard = el('g', { class: 'brouillard' }, svg);
@@ -316,7 +338,15 @@ const VuePlateau = (() => {
       if (porte) return toucherPorte(porte.dataset.porte);
       const c = caseTouchee(evt);
 
+      const monstreTouche = evt.target.closest('[data-monstre]');
       if (vueMJ) {
+        // Vue MJ : toucher un monstre le choisit, puis une case le pose (correction libre).
+        if (monstreTouche && !selection) {
+          selection = 'm:' + monstreTouche.dataset.monstre;
+          const m = etat.monstres.find(k => k.id === monstreTouche.dataset.monstre);
+          msg(`${infoMonstre(m.type).nom} choisi : touchez une case pour le poser (vue MJ).`);
+          return dessiner();
+        }
         // Vue MJ : toucher un héros le choisit, puis une case le pose (correction libre).
         if (heros) {
           selection = selection === heros.dataset.heros ? null : heros.dataset.heros;
@@ -329,7 +359,6 @@ const VuePlateau = (() => {
       }
 
       // Vue des joueurs : en mode attaque, toucher un monstre le choisit comme cible.
-      const monstreTouche = evt.target.closest('[data-monstre]');
       if (ciblage) {
         if (monstreTouche) return choisirCible(monstreTouche.dataset.monstre);
         return msg('Touchez un monstre entouré de rouge, ou « Retour ».');
@@ -346,6 +375,20 @@ const VuePlateau = (() => {
     // Vue MJ : pose un héros n'importe où (sauf roche, meuble ou case occupée).
     function poserHeros({ x, y }) {
       const i = Plateau.idx(L, x, y);
+      if (selection.startsWith('m:')) {
+        const id = selection.slice(2);
+        if (g.zones[i] === '#') return msg('Case de roche : impossible.');
+        if (etat.heros.some(k => k.x === x && k.y === y) || etat.monstres.some(k => k.id !== id && k.x === x && k.y === y)) return msg('Case occupée.');
+        if (Plateau.meubleEn(g, x, y)) return msg('Meuble : impossible.');
+        modifier(e => {
+          const m = e.monstres.find(z => z.id === id); m.x = x; m.y = y;
+          // Si c'est le monstre en train de jouer, son plan est recalculé depuis sa nouvelle case.
+          if (e.zargon?.plan?.monstre === id) preparerZargon(e);
+        });
+        selection = null;
+        msg('Monstre déplacé (vue MJ).');
+        return dessiner();
+      }
       const h = etat.heros.find(k => k.id === selection);
       if (g.zones[i] === '#') return msg('Case de roche : impossible.');
       if (etat.heros.some(k => k.x === x && k.y === y) || etat.monstres.some(k => k.x === x && k.y === y)) return msg('Case occupée.');
@@ -385,9 +428,24 @@ const VuePlateau = (() => {
       if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
       let html = `<span class="titre-tour">T${t.numero} · `;
       if (!actif) {
-        html += `<strong>Zargon</strong></span>
-          <span class="discret petit">(monstres : étape 5)</span>
-          <button id="tr-fin-zargon" class="principal">Fin du tour de Zargon</button>`;
+        const z = etat.zargon || {};
+        const nomM = id => { const m = etat.monstres.find(k => k.id === id); return m ? nomVisible(m) : 'Monstre'; };
+        if (z.defense) {
+          const h = etat.heros.find(k => k.id === z.defense.heros);
+          const n = carac('heros', h.id, 'defense');
+          html += `<strong>Zargon</strong> · ${nomM(z.defense.monstre)} → ${h.nom}</span>
+            <span>${h.nom} : ${n ?? '?'} dé${n > 1 ? 's' : ''} de défense — boucliers blancs ?</span>
+            <div class="des">${Array.from({ length: (n ?? 6) + 1 }, (_, k) => `<button data-blancs="${k}">${k}</button>`).join('')}</div>`;
+        } else if (z.plan) {
+          html += `<strong>Zargon</strong> · ${nomM(z.plan.monstre)} <span class="discret">(${z.n + 1}/${z.file.length})</span></span>
+            <button id="zg-valider" class="principal">Valider</button>
+            <button id="zg-passer">Passer</button>
+            <button id="zg-tout">${auto ? 'Arrêter' : 'Tout valider'}</button>`;
+        } else {
+          html += `<strong>Zargon</strong></span>
+            <span class="discret">${z.file?.length ? 'Tous les monstres ont joué.' : 'Aucun monstre actif.'}</span>
+            <button id="tr-fin-zargon" class="principal">Fin du tour de Zargon</button>`;
+        }
       } else if (cible) {
         const m = etat.monstres.find(k => k.id === cible);
         const n = carac('heros', actif.id, 'attaque');
@@ -424,6 +482,10 @@ const VuePlateau = (() => {
       sur('#tr-fin-depl', terminerDeplacement);
       sur('#tr-fin-tour', finDuTour);
       sur('#tr-fin-zargon', finTourZargon);
+      sur('#zg-valider', () => { auto = false; validerMonstre(); });
+      sur('#zg-passer', () => { auto = false; passerMonstre(); });
+      sur('#zg-tout', () => { auto = !auto; if (auto) validerMonstre(); else dessiner(); });
+      p.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
       sur('#tr-attaquer', commencerAttaque);
       sur('#tr-retour-attaque', () => { ciblage = false; cible = null; msg(''); dessiner(); });
       p.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
@@ -479,14 +541,129 @@ const VuePlateau = (() => {
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
       saisieDes = false; ciblage = false; cible = null;
-      modifier(e => { e.tour = { numero: e.tour.numero, index: e.tour.index + 1 }; });
+      modifier(e => {
+        e.tour = { numero: e.tour.numero, index: e.tour.index + 1 };
+        if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
+      });
       const suivant = herosActif();
-      msg(suivant ? `À ${suivant.nom} de jouer.` : 'Au tour de Zargon.');
+      msg(suivant ? `À ${suivant.nom} de jouer.` : 'Au tour de Zargon.' + (etat.zargon?.plan ? ' ' + decrirePlan() : ''));
     }
 
     function finTourZargon() {
-      modifier(e => { e.tour = { numero: e.tour.numero + 1, index: 0 }; });
+      auto = false;
+      modifier(e => { e.tour = { numero: e.tour.numero + 1, index: 0 }; delete e.zargon; });
       msg(`Tour ${etat.tour.numero} : à ${herosActif()?.nom ?? '?'} de jouer.`);
+    }
+
+    /* ---------- Tour de Zargon ----------
+       Les monstres déjà vus jouent un par un, le plus proche des héros d'abord.
+       Pour chacun : trajet prévu affiché → Valider (ou Passer, ou correction en vue MJ)
+       → s'il touche un héros, l'application lance ses dés d'attaque ; le joueur lance
+       ses dés de défense et touche le nombre de boucliers blancs. */
+
+    let auto = false; // « Tout valider » : enchaîne les monstres, en s'arrêtant pour chaque défense
+
+    // Nom affiché : un monstre dans le brouillard reste anonyme.
+    function nomVisible(m) {
+      return etat.revele.includes(Plateau.idx(L, m.x, m.y)) ? infoMonstre(m.type).nom : 'Un monstre dans l’ombre';
+    }
+
+    function demarrerZargon(e) {
+      const vivants = e.heros.filter(h => h.x != null && h.corps !== 0);
+      const distance = m => Math.min(...vivants.map(h => Math.abs(h.x - m.x) + Math.abs(h.y - m.y)), 999);
+      const file = e.monstres.filter(m => m.vu).sort((a, b) => distance(a) - distance(b)).map(m => m.id);
+      e.zargon = { file, n: 0, plan: null, defense: null };
+      preparerZargon(e);
+    }
+
+    // Calcule le plan du monstre suivant (en sautant ceux qui ont été vaincus entre-temps).
+    function preparerZargon(e) {
+      const z = e.zargon;
+      z.plan = null;
+      while (z.n < z.file.length) {
+        const m = e.monstres.find(k => k.id === z.file[z.n]);
+        if (!m) { z.n++; continue; }
+        const dep = Regles.valeurMonstre(caracs, m, 'deplacement');
+        if (dep === null || Regles.valeurMonstre(caracs, m, 'attaque') === null) { z.plan = { monstre: m.id, erreur: true }; return; }
+        z.plan = { monstre: m.id, ...Plateau.planMonstre(g, e, m, dep) };
+        return;
+      }
+    }
+
+    function decrirePlan() {
+      const p = etat.zargon?.plan;
+      if (!p) return '';
+      const m = etat.monstres.find(k => k.id === p.monstre);
+      const nom = nomVisible(m);
+      if (p.erreur) return `${infoMonstre(m.type).nom} : déplacement ou attaque inconnus (Réglages › Caractéristiques). Touchez « Passer ».`;
+      const h = p.cible && etat.heros.find(k => k.id === p.cible);
+      const pas = p.chemin.length;
+      if (!pas && h) return `${nom} attaque ${h.nom} sans bouger.`;
+      if (!pas) return `${nom} : aucun héros atteignable, il reste sur place.`;
+      return `${nom} avance de ${pas} case${pas > 1 ? 's' : ''}` + (h ? ` et attaque ${h.nom}.` : ' (héros hors d’atteinte ce tour-ci).');
+    }
+
+    function suiteAuto() {
+      if (auto && etat.zargon?.plan && !etat.zargon.defense) setTimeout(() => { if (auto) validerMonstre(); }, 700);
+      if (!etat.zargon?.plan && !etat.zargon?.defense) auto = false;
+    }
+
+    function validerMonstre() {
+      const z = etat.zargon;
+      if (!z?.plan) return;
+      let texte = '';
+      modifier(e => {
+        const z = e.zargon, p = z.plan;
+        const m = e.monstres.find(k => k.id === p.monstre);
+        if (p.erreur) { z.n++; preparerZargon(e); return; }
+        if (p.chemin.length) [m.x, m.y] = p.chemin[p.chemin.length - 1];
+        texte = decrirePlanDans(e, p, m);
+        if (p.cible) {
+          const tirage = Regles.lancer(Regles.valeurMonstre(caracs, m, 'attaque'));
+          const cranes = Regles.compter(tirage, 'crane');
+          const h = e.heros.find(k => k.id === p.cible);
+          texte += ` Attaque : ${Regles.afficher(tirage) || '(aucun dé)'} → ${cranes} crâne${cranes > 1 ? 's' : ''}.`;
+          if (cranes > 0) {
+            z.defense = { monstre: m.id, heros: h.id, cranes };
+            z.plan = null;
+            texte += ` ${h.nom} : lancez vos dés de défense.`;
+            return;
+          }
+          texte += ' Aucune blessure.';
+        }
+        z.n++; preparerZargon(e);
+      });
+      msg(texte + (etat.zargon.plan && !etat.zargon.defense ? ' — Suivant : ' + decrirePlan() : ''));
+      suiteAuto();
+    }
+
+    // Même texte que decrirePlan, mais au passé, pendant la modification.
+    function decrirePlanDans(e, p, m) {
+      const nom = e.revele.includes(Plateau.idx(L, m.x, m.y)) ? infoMonstre(m.type).nom : 'Un monstre dans l’ombre';
+      const pas = p.chemin.length;
+      return pas ? `${nom} avance de ${pas} case${pas > 1 ? 's' : ''}.` : `${nom} reste sur place.`;
+    }
+
+    function defendre(blancs) {
+      let texte = '';
+      modifier(e => {
+        const z = e.zargon, d = z.defense;
+        const h = e.heros.find(k => k.id === d.heros);
+        const degats = Math.max(0, d.cranes - blancs);
+        h.corps = Math.max(0, (h.corps ?? 0) - degats);
+        texte = `${h.nom} : ${blancs} bouclier${blancs > 1 ? 's' : ''} blanc${blancs > 1 ? 's' : ''}. `
+          + (degats ? `${degats} blessure${degats > 1 ? 's' : ''} → ${h.corps} point${h.corps > 1 ? 's' : ''} de Vie.` : 'Aucune blessure.')
+          + (h.corps === 0 ? ` ⚠ ${h.nom} n’a plus de points de Vie : il meurt, sauf potion ou sort de soin (voir sa fiche).` : '');
+        z.defense = null;
+        z.n++; preparerZargon(e);
+      });
+      msg(texte + (etat.zargon.plan ? ' — Suivant : ' + decrirePlan() : ''));
+      suiteAuto();
+    }
+
+    function passerMonstre() {
+      modifier(e => { e.zargon.n++; preparerZargon(e); });
+      msg(etat.zargon.plan ? 'Monstre passé. Suivant : ' + decrirePlan() : 'Tous les monstres ont joué.');
     }
 
     /* ---------- Attaque d'un héros ---------- */
@@ -615,6 +792,8 @@ const VuePlateau = (() => {
       // Pas de dévoilement automatique ici : le MJ décide.
       const avant = JSON.stringify(etat);
       const devoile = Plateau.basculerZone(g, etat, x, y);
+      // Les monstres de la zone dévoilée deviennent « vus » : Zargon pourra les faire jouer.
+      if (devoile) for (const m of etat.monstres) if (etat.revele.includes(Plateau.idx(L, m.x, m.y))) m.vu = true;
       historique.push(avant);
       if (historique.length > 60) historique.shift();
       partie.etat = etat;
