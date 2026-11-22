@@ -290,7 +290,7 @@ const Plateau = (() => {
         file.push(v);
       }
     }
-    if (but === null) return { chemin: [], cible: null, atteint: false };
+    if (but === null) return planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre);
 
     // Chemin complet, puis limité à la portée ; on recule si la case d'arrivée est occupée.
     const complet = [];
@@ -305,6 +305,72 @@ const Plateau = (() => {
       cible: cibles.length ? cibles[0].id : null,
       atteint: cibles.length > 0,
     };
+  }
+
+  // Distance « idéale » de chaque case au héros vivant le plus proche, comme si les
+  // obstacles passagers n'existaient pas : les portes connues comptent comme ouvertes,
+  // les figurines ne bloquent pas ; la roche, les murs, les meubles et les éboulements, si.
+  // Sert à savoir de quel côté se rapprocher quand aucun chemin libre n'existe.
+  function distancesIdeales(g, etat, vivants) {
+    const dist = new Map();
+    const file = [];
+    for (const h of vivants) {
+      const c = idx(g.L, h.x, h.y);
+      if (!dist.has(c)) { dist.set(c, 0); file.push(c); }
+    }
+    const passable = (i, j) => {
+      if (g.zones[i] === '#' || g.zones[j] === '#') return false;
+      const x = j % g.L, y = Math.floor(j / g.L);
+      if (eboulementEn(etat, x, y) || meubleEn(g, x, y)) return false;
+      if (g.zones[i] === g.zones[j]) return true;
+      const p = g.portesParBord[bord(i, j)];
+      return !!p && porteVisible(etat, p);
+    };
+    for (let k = 0; k < file.length; k++) {
+      const c = file[k];
+      for (const v of voisins(g, c)) {
+        if (dist.has(v) || !passable(c, v)) continue;
+        dist.set(v, dist.get(c) + 1);
+        file.push(v);
+      }
+    }
+    return dist;
+  }
+
+  // Aucun héros atteignable (porte fermée, passage bouché…) : le monstre contourne
+  // ce qu'il peut et s'arrête, dans la limite de son déplacement, sur la case libre
+  // la plus proche d'un héros (décision du 22/11/2026). S'il ne gagne rien, il reste.
+  function planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre) {
+    const rien = { chemin: [], cible: null, atteint: false };
+    if (!vivants.length || portee <= 0) return rien;
+    const depart = idx(g.L, monstre.x, monstre.y);
+    const ideale = distancesIdeales(g, etat, vivants);
+    const manhattan = c => Math.min(...vivants.map(h => Math.abs(h.x - c % g.L) + Math.abs(h.y - Math.floor(c / g.L))));
+    // Note d'une case : distance idéale si un trajet existe, sinon distance à vol d'oiseau (pénalisée).
+    const note = c => ideale.has(c) ? ideale.get(c) : 1000 + manhattan(c);
+
+    const precedent = new Map([[depart, null]]);
+    const pas = new Map([[depart, 0]]);
+    const file = [depart];
+    let meilleure = depart;
+    for (let k = 0; k < file.length; k++) {
+      const c = file[k];
+      if (c !== depart && !occupeeParMonstre(c)) {
+        // Plus proche du héros d'abord ; à égalité, le trajet le plus court.
+        if (note(c) < note(meilleure) || (note(c) === note(meilleure) && meilleure !== depart && pas.get(c) < pas.get(meilleure))) meilleure = c;
+      }
+      if (pas.get(c) >= portee) continue;
+      for (const v of voisins(g, c)) {
+        if (precedent.has(v) || !passageMonstre(g, etat, c, v)) continue;
+        precedent.set(v, c);
+        pas.set(v, pas.get(c) + 1);
+        file.push(v);
+      }
+    }
+    if (meilleure === depart) return rien;
+    const chemin = [];
+    for (let c = meilleure; c !== depart; c = precedent.get(c)) chemin.unshift([c % g.L, Math.floor(c / g.L)]);
+    return { chemin, cible: null, atteint: false };
   }
 
   /* ---------- Pièges et fouilles ---------- */
