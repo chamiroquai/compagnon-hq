@@ -475,3 +475,12 @@ svg .icone { pointer-events: none; overflow: visible; }
 /* Sorts : cibles possibles entourées ; pointillés = hors de vue (sort lancé avec un avertissement) */
 .pion.heros.cible-sort circle:last-of-type { stroke: #7fd0ff; stroke-width: 4; }
 .pion.heros.cible-sort.hors-vue circle:last-of-type, .monstre.cible.hors-vue rect { stroke-dasharray: 5 4; }
+
+/* Image du plateau (Réglages › Image du plateau) : les cases deviennent transparentes,
+   le brouillard reste noir ; murs et quadrillage de l'application seulement sur demande. */
+svg.avec-image .case.c-couloir, svg.avec-image .case.c-piece { fill-opacity: 0; stroke-opacity: 0; }
+svg.avec-image:not(.murs-app) .murs { display: none; }
+.image-plateau { pointer-events: none; }
+.apercu-plateau { margin-top: 8px; border: 1px solid var(--bord); border-radius: 8px; overflow: hidden; background: #000; }
+.apercu-plateau svg { display: block; width: 100%; height: auto; }
+.grille-apercu { stroke: #ff3b30; stroke-width: 1.5; stroke-opacity: 0.8; }

@@ -264,6 +264,19 @@ const VuePlateau = (() => {
       svg.innerHTML = '';
       svg.classList.toggle('mj', vueMJ);
 
+      /* 0. Image du plateau (Réglages › Image du plateau ; reste sur l'appareil).
+            Seulement pour un plateau de 26 × 19 cases (celui du jeu de base). Les marges
+            indiquent, en % de l'image, où commence et finit le quadrillage. */
+      const img = options.imagePlateau;
+      const avecImage = !!(img?.donnees && L === 26 && H === 19);
+      svg.classList.toggle('avec-image', avecImage);
+      svg.classList.toggle('murs-app', !avecImage || !!img?.murs);
+      if (avecImage) {
+        const g0 = (img.gauche || 0) / 100, d0 = (img.droite || 0) / 100, h0 = (img.haut || 0) / 100, b0 = (img.bas || 0) / 100;
+        const largeur = (L * T) / Math.max(0.05, 1 - g0 - d0), hauteur = (H * T) / Math.max(0.05, 1 - h0 - b0);
+        el('image', { href: img.donnees, x: -g0 * largeur, y: -h0 * hauteur, width: largeur, height: hauteur, preserveAspectRatio: 'none', class: 'image-plateau' }, svg);
+      }
+
       // 1. Cases
       const fond = el('g', {}, svg);
       for (let i = 0; i < L * H; i++) {

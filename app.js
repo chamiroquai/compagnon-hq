@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.24.0';
+const VERSION_APP = '0.25.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -117,8 +117,9 @@ async function afficherPartie(id) {
     vue.innerHTML = '<div id="zone-plateau" class="zone-jeu"></div>';
     const caracs = await lireCaracs();
     const cartesTresor = await Stockage.lireReglage('cartesTresor') || [];
+    const imagePlateau = await Stockage.lireReglage('imagePlateau') || null;
     VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, {
-      quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor,
+      quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor, imagePlateau,
       terminer: async issue => {
         if (!confirm(`Terminer la quête : ${issue === 'reussie' ? 'réussie' : 'échouée'} ?\nL’or et l’inventaire de chaque héros seront enregistrés dans son personnage.`)) return;
         const morts = await Heros.terminerQuete(partie, issue);
@@ -407,6 +408,7 @@ async function exporter() {
     personnages: await Stockage.listerPersonnages(),
     cartesTresor: await Stockage.lireReglage('cartesTresor') || [],
     equipementDepart: await Stockage.lireReglage('equipementDepart') || null,
+    imagePlateau: await Stockage.lireReglage('imagePlateau') || null,
   };
   const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -463,6 +465,8 @@ async function importerFichier(fichier) {
   }
   if (Array.isArray(donnees.cartesTresor) && donnees.cartesTresor.length) await Stockage.ecrireReglage('cartesTresor', donnees.cartesTresor);
   if (donnees.equipementDepart && typeof donnees.equipementDepart === 'object') await Stockage.ecrireReglage('equipementDepart', donnees.equipementDepart);
+  if (typeof donnees.imagePlateau?.donnees === 'string' && donnees.imagePlateau.donnees.startsWith('data:image/'))
+    await Stockage.ecrireReglage('imagePlateau', donnees.imagePlateau);
   if (donnees.caracteristiques && typeof donnees.caracteristiques === 'object') {
     await Stockage.ecrireReglage('caracteristiques', donnees.caracteristiques);
   }
@@ -491,9 +495,11 @@ async function afficherAPropos() {
   const caracs = await lireCaracs();
   const cartes = await Stockage.lireReglage('cartesTresor') || [];
   const equipement = await lireEquipementDepart();
+  const imagePlateau = await Stockage.lireReglage('imagePlateau') || null;
   vue.innerHTML = `
     ${formulaireCaracs(caracs)}
     ${formulaireEquipement(equipement)}
+    ${formulaireImagePlateau(imagePlateau)}
     ${formulaireCartes(cartes)}
     <section class="carte">
       <h2>Compagnon de quête ${VERSION_APP}</h2>
@@ -524,6 +530,7 @@ async function afficherAPropos() {
 
   brancherCaracs(caracs);
   brancherEquipement(equipement);
+  brancherImagePlateau(imagePlateau);
   brancherCartes(cartes);
 
   $('#btn-maj').addEventListener('click', async () => {
@@ -654,6 +661,106 @@ function brancherEquipement(equipement) {
       brancher();
     }, nom);
     brancher();
+  });
+}
+
+/* ---------- Image du plateau (photo ou scan personnel, reste sur l'appareil) ----------
+   L'image est réduite (2400 px de large au plus) et enregistrée dans IndexedDB.
+   Les marges (en % de l'image) indiquent où se trouve le quadrillage de 26 × 19 cases. */
+
+const MARGES_PLATEAU = [['gauche', 'Gauche'], ['haut', 'Haut'], ['droite', 'Droite'], ['bas', 'Bas']];
+
+function formulaireImagePlateau(img) {
+  return `
+    <section class="carte">
+      <h2>Image du plateau</h2>
+      <p>Une photo ou un scan de votre plateau, affiché sous les pions pendant le jeu (seulement pour les quêtes
+         sur le plateau du jeu de base, 26 × 19 cases). L’image reste sur cet iPad.</p>
+      <div class="ligne">
+        <button id="img-choisir">${img?.donnees ? 'Remplacer l’image…' : 'Choisir une image…'}</button>
+        ${img?.donnees ? '<button id="img-retirer" class="danger">Retirer l’image</button>' : ''}
+      </div>
+      <p id="img-etat" class="discret petit"></p>
+      ${img?.donnees ? `
+        <p class="petit">Ajustez les marges (en % de l’image) pour que la grille rouge tombe sur les cases du plateau :</p>
+        <div class="grille-champs">
+          ${MARGES_PLATEAU.map(([cle, nom]) => `<label class="champ-perso"><span>${nom} (%)</span>
+            <input type="number" inputmode="decimal" step="0.1" min="0" max="45" data-marge="${cle}" value="${img[cle] ?? 0}"></label>`).join('')}
+        </div>
+        <label class="ligne petit"><input type="checkbox" id="img-murs" ${img.murs ? 'checked' : ''}> Tracer aussi les murs de l’application par-dessus l’image</label>
+        <div class="apercu-plateau"><svg id="img-apercu" viewBox="0 0 1040 760" preserveAspectRatio="xMidYMid meet"></svg></div>` : ''}
+    </section>`;
+}
+
+// Réduit une image choisie par l'utilisateur et renvoie un « data URL » JPEG.
+function reduireImage(fichier, largeurMax = 2400) {
+  return new Promise((ok, ko) => {
+    const url = URL.createObjectURL(fichier);
+    const im = new Image();
+    im.onload = () => {
+      const r = Math.min(1, largeurMax / im.naturalWidth);
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth * r); c.height = Math.round(im.naturalHeight * r);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      ok(c.toDataURL('image/jpeg', 0.85));
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); ko(new Error('image illisible')); };
+    im.src = url;
+  });
+}
+
+// Aperçu : l'image placée comme en jeu, avec la grille de 26 × 19 cases en rouge.
+function dessinerApercuPlateau(img) {
+  const svg = $('#img-apercu');
+  if (!svg || !img?.donnees) return;
+  const T = 40, L = 26, H = 19;
+  const g0 = (img.gauche || 0) / 100, d0 = (img.droite || 0) / 100, h0 = (img.haut || 0) / 100, b0 = (img.bas || 0) / 100;
+  const largeur = (L * T) / Math.max(0.05, 1 - g0 - d0), hauteur = (H * T) / Math.max(0.05, 1 - h0 - b0);
+  let html = `<image href="${img.donnees}" x="${-g0 * largeur}" y="${-h0 * hauteur}" width="${largeur}" height="${hauteur}" preserveAspectRatio="none"/>`;
+  for (let x = 0; x <= L; x++) html += `<line class="grille-apercu" x1="${x * T}" y1="0" x2="${x * T}" y2="${H * T}"/>`;
+  for (let y = 0; y <= H; y++) html += `<line class="grille-apercu" x1="0" y1="${y * T}" x2="${L * T}" y2="${y * T}"/>`;
+  svg.innerHTML = html;
+}
+
+function brancherImagePlateau(img) {
+  const etat = $('#img-etat');
+  const choix = document.createElement('input');
+  choix.type = 'file'; choix.accept = 'image/*'; choix.hidden = true;
+  vue.appendChild(choix);
+  $('#img-choisir').addEventListener('click', () => choix.click());
+  choix.addEventListener('change', async () => {
+    const f = choix.files[0];
+    choix.value = '';
+    if (!f) return;
+    etat.textContent = 'Préparation de l’image…';
+    try {
+      const donnees = await reduireImage(f);
+      const nouvelle = { gauche: 0, haut: 0, droite: 0, bas: 0, murs: false, ...(img || {}), donnees };
+      await Stockage.ecrireReglage('imagePlateau', nouvelle);
+      afficherAPropos();
+    } catch {
+      etat.textContent = 'Cette image n’a pas pu être lue.';
+    }
+  });
+  $('#img-retirer')?.addEventListener('click', async () => {
+    if (!confirm('Retirer l’image du plateau ?')) return;
+    await Stockage.ecrireReglage('imagePlateau', null);
+    afficherAPropos();
+  });
+  if (!img?.donnees) return;
+  dessinerApercuPlateau(img);
+  vue.querySelectorAll('[data-marge]').forEach(inp => inp.addEventListener('input', async () => {
+    const v = Number(inp.value);
+    img[inp.dataset.marge] = Number.isFinite(v) ? Math.max(0, Math.min(45, v)) : 0;
+    dessinerApercuPlateau(img);
+    await Stockage.ecrireReglage('imagePlateau', img);
+    etat.textContent = 'Enregistré.';
+  }));
+  $('#img-murs').addEventListener('change', async () => {
+    img.murs = $('#img-murs').checked;
+    await Stockage.ecrireReglage('imagePlateau', img);
+    etat.textContent = 'Enregistré.';
   });
 }
 
