@@ -51,7 +51,7 @@ const Heros = (() => {
       if (!p) continue;
       p.or = h.or || 0;
       p.inventaire = h.inventaire || [];
-      const mort = h.corps === 0;
+      const mort = !!h.mort || h.corps === 0;
       p.journal = [...(p.journal || []), { titre, issue, date, mort }];
       if (mort) { p.mort = true; morts.push(p.nom); }
       await Stockage.enregistrerPersonnage(p);

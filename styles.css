@@ -436,3 +436,4 @@ svg .icone { pointer-events: none; overflow: visible; }
 .escalier .icone { color: #2b2620; }
 .piege .icone { color: #ffd76a; }
 .piege.cache .icone { color: #ff8a7a; }
+.ordre-jeu li.mort { opacity: 0.4; }

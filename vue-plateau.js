@@ -208,6 +208,13 @@ const VuePlateau = (() => {
       Plateau.devoiler(g, etat, Plateau.porteeDe(partie.reglages));
       // Courage prend fin quand plus aucun monstre n'est en vue.
       if (!etat.monstres.some(m => etat.revele.includes(Plateau.idx(L, m.x, m.y)))) etat.heros.forEach(h => { delete h.courage; });
+      // Escalier : la question « terminer la quête ? » n'a de sens qu'après un départ, et revient après un nouveau départ.
+      if (quete.escalier) {
+        const dehors = etat.heros.filter(debout).some(h => !surEscalier(h));
+        if (dehors) { etat.sortisEscalier = true; delete etat.escalierRefuse; }
+      }
+      // Un héros soigné n'est plus « à terre en attente ».
+      etat.heros.forEach(h => { if (h.corps !== 0) delete h.secoursReporte; });
       partie.etat = etat;
       enregistrer();
       dessiner();
@@ -217,7 +224,7 @@ const VuePlateau = (() => {
       if (!historique.length) return;
       etat = JSON.parse(historique.pop());
       partie.etat = etat;
-      selection = null; combat = null; conclusion = null; ciblage = false; fenetreActions = null; evenement = null;
+      selection = null; combat = null; conclusion = null; ciblage = false; fenetreActions = null; evenement = null; heritage = null; potionInconnue = null;
       enregistrer();
       msg('Action annulée.');
       dessiner();
@@ -508,6 +515,21 @@ const VuePlateau = (() => {
 
     /* ---------- Tour par tour ---------- */
 
+    // Héros encore en jeu : ni mort, ni à terre (0 point de Vie), et posé sur le plateau.
+    const debout = h => !!h && !h.mort && h.x != null && h.corps !== 0;
+    // Prochain index de l'ordre de jeu (à partir de « depuis ») d'un héros qui peut jouer.
+    function prochainJoueur(e, depuis) {
+      const o = e.ordre || [];
+      let i = depuis;
+      while (i < o.length && !debout(e.heros.find(k => k.id === o[i]))) i++;
+      return i;
+    }
+    // Passe au héros suivant (ou à Zargon) ; utilisé par « Fin du tour » et quand le héros actif tombe.
+    function passerAuSuivant(e) {
+      e.tour = { numero: e.tour.numero, index: prochainJoueur(e, e.tour.index + 1) };
+      if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
+    }
+
     // Héros dont c'est le tour, ou null pendant le tour de Zargon.
     function herosActif() {
       const t = etat.tour, ordre = etat.ordre || [];
@@ -523,8 +545,8 @@ const VuePlateau = (() => {
       conteneur.querySelector('#pl-ordre').innerHTML =
         ordre.map((hid, n) => {
           const h = etat.heros.find(k => k.id === hid);
-          return `<li class="${n === t.index ? 'en-cours' : ''}${h.corps === 0 ? ' a-terre' : ''}"><button class="puce-heros" data-fiche="${hid}" aria-label="Fiche : ${h.nom}">
-            <span class="pastille h-${hid}"></span>${h.court}<span class="pc">♥${h.corps ?? '?'}</span></button></li>`;
+          return `<li class="${n === t.index ? 'en-cours' : ''}${h.corps === 0 ? ' a-terre' : ''}${h.mort ? ' mort' : ''}"><button class="puce-heros" data-fiche="${hid}" aria-label="Fiche : ${h.nom}">
+            <span class="pastille h-${hid}"></span>${h.court}<span class="pc">${h.mort ? '☠' : `♥${h.corps ?? '?'}`}</span></button></li>`;
         }).join('')
         + `<li class="zargon ${t.index >= ordre.length ? 'en-cours' : ''}" title="Zargon">Z</li>`;
 
@@ -653,8 +675,7 @@ const VuePlateau = (() => {
       modifier(e => {
         const k = e.heros.find(z => z.id === actif.id);
         if (k) delete k.passeTour; // la Tempête ne dure qu'un tour
-        e.tour = { numero: e.tour.numero, index: e.tour.index + 1 };
-        if (e.tour.index >= (e.ordre || []).length) demarrerZargon(e);
+        passerAuSuivant(e);
       });
       const suivant = herosActif();
       msg(suivant ? `À ${suivant.nom} de jouer.` : '');
@@ -662,7 +683,7 @@ const VuePlateau = (() => {
 
     function finTourZargon() {
       conclusion = null;
-      modifier(e => { e.tour = { numero: e.tour.numero + 1, index: 0 }; delete e.zargon; });
+      modifier(e => { e.tour = { numero: e.tour.numero + 1, index: prochainJoueur(e, 0) }; delete e.zargon; });
       msg(`Tour ${etat.tour.numero} : à ${herosActif()?.nom ?? '?'} de jouer.`);
     }
 
@@ -674,17 +695,49 @@ const VuePlateau = (() => {
 
     function porteProposee() {
       const h = herosActif();
-      if (!h || vueMJ || fenetreActions || ciblage || combat || conclusion || evenement) return null;
+      if (!h || vueMJ || fenetreActions || ciblage || combat || conclusion || evenement || secours() || heritage) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
         !refusees.has(`${p.id}@${h.x},${h.y}`)) || null;
     }
 
+    // Case de l'escalier (2 × 2 cases à partir de quete.escalier).
+    function surEscalier(h) {
+      const s = quete.escalier;
+      return !!s && h.x != null && h.x >= s.x && h.x <= s.x + 1 && h.y >= s.y && h.y <= s.y + 1;
+    }
+
+    // Tous les héros debout sont revenus à l'escalier après en être partis : proposer la fin de la quête.
+    function escalierPropose() {
+      if (!quete.escalier || vueMJ || !herosActif() || fenetreActions || ciblage || combat || conclusion || evenement || secours() || heritage) return false;
+      if (!etat.sortisEscalier || etat.escalierRefuse) return false;
+      const vivants = etat.heros.filter(debout);
+      return vivants.length > 0 && vivants.every(surEscalier);
+    }
+
+    function dessinerInviteEscalier(boite) {
+      const aTerre = etat.heros.filter(h => !h.mort && h.corps === 0).map(h => h.nom);
+      boite.innerHTML = `<span>Tous les héros sont revenus à l’escalier. Terminer la quête ?${aTerre.length
+          ? ` <span class="erreur">${echapperTexte(aTerre.join(', '))} (à terre) ${aTerre.length > 1 ? 'seront comptés comme morts' : 'sera compté comme mort'}.</span>` : ''}</span>
+        <button id="inv-reussie" class="principal">Quête réussie</button>
+        <button id="inv-echouee">Quête échouée</button>
+        <button id="inv-pas-encore">Pas encore</button>`;
+      boite.hidden = false;
+      boite.querySelector('#inv-reussie').addEventListener('click', () => options.terminer?.('reussie'));
+      boite.querySelector('#inv-echouee').addEventListener('click', () => options.terminer?.('echouee'));
+      boite.querySelector('#inv-pas-encore').addEventListener('click', () => {
+        etat.escalierRefuse = true; partie.etat = etat; enregistrer(); dessiner();
+      });
+    }
+
     function dessinerInvite() {
       const boite = conteneur.querySelector('#pl-invite');
       const p = porteProposee();
-      if (!p) { boite.hidden = true; return; }
+      if (!p) {
+        if (escalierPropose()) return dessinerInviteEscalier(boite);
+        boite.hidden = true; return;
+      }
       const h = herosActif();
       boite.innerHTML = `<span>${p.secrete ? 'Porte secrète' : 'Une porte'} contre ${echapperTexte(h.nom)}. L’ouvrir ?</span>
         <button id="inv-ouvrir" class="principal">Ouvrir</button>
@@ -931,6 +984,8 @@ const VuePlateau = (() => {
        nouvelle action restent possibles, avec un avertissement (règle d'arbitrage). */
 
     let evenement = null; // fenêtre en cours : piège, saut, désamorçage ou résultat de fouille
+    let heritage = null;  // { heros } : un héros vient de mourir, on choisit qui reprend son or et ses objets
+    let potionInconnue = null; // { heros, k } : potion bue au secours, on demande combien de points de Vie elle rend
 
     const NOMS_PIEGES = { fosse: 'fosse', bloc: 'bloc qui tombe', lance: 'piège à lance' };
 
@@ -1229,7 +1284,13 @@ const VuePlateau = (() => {
         return finCarte(titre, `${texte}+${carte.valeur || 0} pièces d’or pour ${h.nom}.`);
       }
       if (carte.type === 'potion' || carte.type === 'objet') {
-        modifier(e => { const k = e.heros.find(z => z.id === h.id); (k.inventaire = k.inventaire || []).push({ nom: carte.nom || 'Objet' }); });
+        const objet = { nom: carte.nom || 'Objet' };
+        if (carte.type === 'potion') {
+          objet.potion = true;
+          if (Number.isFinite(carte.valeur)) objet.soin = carte.valeur;
+          if (carte.texte) objet.texte = carte.texte;
+        }
+        modifier(e => { const k = e.heros.find(z => z.id === h.id); (k.inventaire = k.inventaire || []).push(objet); });
         return finCarte(titre, `${texte}« ${carte.nom || 'Objet'} » ajouté à l’inventaire de ${h.nom}.`);
       }
       if (carte.type === 'danger') {
@@ -1781,6 +1842,9 @@ const VuePlateau = (() => {
             <p class="question">${h.nom} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de défense. Combien de boucliers blancs ?</p>
             <div class="choix nombres">${boutonsNombre(n, 'blancs')}</div>
           </div>`;
+      } else if ((secours() || heritage) && !evenement) {
+        // Un héros vient de tomber (ou de mourir) : on décide avant de continuer.
+        html = htmlSecours();
       } else if (z?.plan && !herosActif()) {
         // Fenêtre d'ambiance avant le coup d'un monstre.
         const p = z.plan;
@@ -1873,7 +1937,156 @@ const VuePlateau = (() => {
       boite.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
       boite.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
       if (evenement) brancherEvenement(boite);
+      if ((secours() || heritage) && !evenement && !conclusion && !combat && !z?.defense) brancherSecours(boite);
       animerDes(boite);
+    }
+
+    /* ---------- Héros à terre, potions, mort ----------
+       Règle : à 0 point de Vie, un héros meurt, sauf s'il est sauvé tout de suite
+       (potion ou sort de soin). L'application ouvre une fenêtre de secours ; on peut
+       aussi « décider plus tard » (le héros reste à terre et ne joue plus). */
+
+    const SORTS_SOIN = ['eauGuerison', 'guerisonCorps'];
+    const estPotion = o => !!o && (o.potion || /potion/i.test(o.nom || ''));
+
+    // Premier héros à terre dont le sort n'est pas encore décidé.
+    function secours() {
+      return etat.heros.find(h => h.corps === 0 && !h.mort && h.x != null && !h.secoursReporte) || null;
+    }
+
+    // Boire la potion n° k de l'inventaire ; « valeur » : points de Vie rendus (0 si effet autre).
+    function boirePotion(hid, k, valeur) {
+      const h = etat.heros.find(z => z.id === hid);
+      const o = h?.inventaire?.[k];
+      if (!o) return;
+      let gain = 0;
+      potionInconnue = null;
+      modifier(e => {
+        const z = e.heros.find(q => q.id === hid);
+        z.inventaire.splice(k, 1);
+        const avant = z.corps ?? 0;
+        z.corps = Math.min(z.corpsMax ?? avant + valeur, avant + valeur);
+        gain = z.corps - avant;
+      });
+      msg(`${h.nom} boit « ${o.nom} »${gain ? ` : +${gain} point${gain > 1 ? 's' : ''} de Vie` : ''}.${o.texte ? ' ' + o.texte : ''}`);
+    }
+
+    // Sort de soin lancé par « lanceur » sur le héros à terre (hors de son tour : avertissement).
+    function soignerParSort(lanceurId, sortId, cibleId) {
+      const l = etat.heros.find(z => z.id === lanceurId), c = etat.heros.find(z => z.id === cibleId);
+      const actif = herosActif();
+      const avert = [];
+      if (actif?.id !== lanceurId) avert.push(`${l.nom} le lance hors de son tour`);
+      else if ((etat.tour.actions || 0) >= 1) avert.push(`${l.nom} a déjà fait une action ce tour-ci`);
+      let gain = 0;
+      modifier(e => {
+        const x = e.sorts[lanceurId].find(q => q.id === sortId);
+        if (x) x.utilise = true;
+        if (actif?.id === lanceurId) { e.tour.actions = (e.tour.actions || 0) + 1; e.tour.deplacement = null; }
+        const z = e.heros.find(q => q.id === cibleId);
+        const avant = z.corps ?? 0;
+        z.corps = Math.min(z.corpsMax ?? avant + 4, avant + 4);
+        gain = z.corps - avant;
+      });
+      msg(`${l.nom} lance ${Sorts.sort(sortId).nom} : ${c.nom} récupère ${gain} point${gain > 1 ? 's' : ''} de Vie.${avert.length ? ` ⚠ Écart aux règles : ${avert.join(', ')}.` : ''}`);
+    }
+
+    // Le héros meurt : il quitte le plateau et ne joue plus ; ses biens peuvent passer à un autre héros.
+    function mourir(hid) {
+      const h = etat.heros.find(z => z.id === hid);
+      const etaitActif = herosActif()?.id === hid;
+      fenetreActions = null; evenement = null; ciblage = false; combat = null;
+      const biens = (h.or || 0) > 0 || (h.inventaire || []).length > 0;
+      // Posé avant modifier(), qui redessine l'écran.
+      heritage = biens && etat.heros.some(k => k.id !== hid && debout(k)) ? { heros: hid } : null;
+      modifier(e => {
+        const z = e.heros.find(q => q.id === hid);
+        z.mort = true; z.mortEn = { x: z.x, y: z.y }; z.x = null; z.y = null;
+        delete z.secoursReporte;
+        if (etaitActif) passerAuSuivant(e);
+      });
+      msg(`☠ ${h.nom} est mort.`);
+    }
+
+    function reporterSecours(hid) {
+      const etaitActif = herosActif()?.id === hid;
+      if (etaitActif) fenetreActions = null;
+      modifier(e => {
+        e.heros.find(q => q.id === hid).secoursReporte = true;
+        if (etaitActif) passerAuSuivant(e);
+      });
+      msg('Décision reportée : le héros reste à terre et ne joue plus. Sa fiche permet de le secourir ou de le déclarer mort.');
+    }
+
+    function heriter(receveurId) {
+      const hid = heritage.heros;
+      heritage = null;
+      if (receveurId) modifier(e => {
+        const z = e.heros.find(q => q.id === hid), r = e.heros.find(q => q.id === receveurId);
+        r.or = (r.or || 0) + (z.or || 0);
+        r.inventaire = [...(r.inventaire || []), ...(z.inventaire || [])];
+        z.or = 0; z.inventaire = [];
+      });
+      else dessiner();
+      msg(receveurId ? `${etat.heros.find(q => q.id === receveurId).nom} récupère l’or et les objets.` : 'L’or et les objets restent avec lui.');
+    }
+
+    // Contenu de la fenêtre de secours (ou d'héritage), pour dessinerModale.
+    function htmlSecours() {
+      if (heritage) {
+        const h = etat.heros.find(z => z.id === heritage.heros);
+        const biens = [h.or ? `${h.or} pièce${h.or > 1 ? 's' : ''} d’or` : '', ...(h.inventaire || []).map(o => o.nom)].filter(Boolean);
+        return `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, 0, h.corpsMax, 'vaincu')}</div>
+          <p class="titre-zargon">☠ ${echapperTexte(h.nom)} est mort</p>
+          <p class="resultat">Il laisse : ${echapperTexte(biens.join(', '))}. Qui les récupère ?</p>
+          <div class="choix">${etat.heros.filter(debout).map(k => `<button data-heritier="${k.id}">${echapperTexte(k.nom)}</button>`).join('')}
+            <button data-heritier="">Personne (ils restent avec lui)</button></div>`;
+      }
+      const h = secours();
+      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, 0, h.corpsMax, 'vaincu')}</div>
+        <p class="titre-zargon">${echapperTexte(h.nom)} est à terre</p>`;
+      if (potionInconnue) {
+        const o = h.inventaire[potionInconnue.k];
+        return `${tete}<p class="question">Combien de points de Vie rend « ${echapperTexte(o.nom)} » ? (voir la carte)</p>
+          <div class="choix nombres">${[1, 2, 3, 4, 5, 6].map(n => `<button data-valeur-potion="${n}">${n}</button>`).join('')}</div>
+          <div class="choix"><button data-valeur-potion="0">Aucun (autre effet)</button><button id="sc-retour">Retour</button></div>`;
+      }
+      const potions = (h.inventaire || []).map((o, k) => ({ o, k })).filter(({ o }) => estPotion(o));
+      const soins = [];
+      for (const l of etat.heros.filter(debout)) for (const x of sortsDe(l)) if (!x.utilise && SORTS_SOIN.includes(x.id)) soins.push({ l, id: x.id });
+      const vivants = etat.heros.filter(debout).length;
+      return `${tete}
+        <p class="resultat">Plus aucun point de Vie : ${echapperTexte(h.nom)} meurt, sauf s’il est sauvé tout de suite par une potion ou un sort de soin.</p>
+        ${potions.length || soins.length ? `<div class="choix">
+          ${potions.map(({ o, k }) => `<button data-boire-secours="${k}" class="principal">Boire : ${echapperTexte(o.nom)}${Number.isFinite(o.soin) ? ` (+${o.soin})` : ''}</button>`).join('')}
+          ${soins.map(({ l, id }) => `<button data-soin="${l.id}:${id}">${echapperTexte(Sorts.sort(id).nom)} (${echapperTexte(l.nom)})</button>`).join('')}
+        </div>` : '<p class="discret">Aucune potion dans son inventaire, aucun sort de soin disponible.</p>'}
+        ${!vivants ? '<p class="erreur">Plus aucun héros debout : la quête est perdue s’il meurt.</p>' : ''}
+        <div class="choix">
+          <button id="sc-mort" class="danger">Il meurt</button>
+          <button id="sc-plus-tard">Décider plus tard</button>
+          ${!vivants ? '<button id="sc-echec">Quête échouée</button>' : ''}
+        </div>
+        <p class="discret petit">Tout s’annule avec ↶.</p>`;
+    }
+
+    function brancherSecours(boite) {
+      const h = secours();
+      boite.querySelectorAll('[data-heritier]').forEach(b => b.addEventListener('click', () => heriter(b.dataset.heritier || null)));
+      boite.querySelectorAll('[data-boire-secours]').forEach(b => b.addEventListener('click', () => {
+        const k = +b.dataset.boireSecours, o = h.inventaire[k];
+        if (Number.isFinite(o.soin)) boirePotion(h.id, k, o.soin);
+        else { potionInconnue = { heros: h.id, k }; dessiner(); }
+      }));
+      boite.querySelectorAll('[data-valeur-potion]').forEach(b => b.addEventListener('click', () => boirePotion(h.id, potionInconnue.k, +b.dataset.valeurPotion)));
+      boite.querySelector('#sc-retour')?.addEventListener('click', () => { potionInconnue = null; dessiner(); });
+      boite.querySelectorAll('[data-soin]').forEach(b => b.addEventListener('click', () => {
+        const [lid, sid] = b.dataset.soin.split(':');
+        soignerParSort(lid, sid, h.id);
+      }));
+      boite.querySelector('#sc-mort')?.addEventListener('click', () => mourir(h.id));
+      boite.querySelector('#sc-plus-tard')?.addEventListener('click', () => reporterSecours(h.id));
+      boite.querySelector('#sc-echec')?.addEventListener('click', () => { mourir(h.id); options.terminer?.('echouee'); });
     }
 
     /* ---------- Fiche d'un héros ---------- */
@@ -1901,13 +2114,16 @@ const VuePlateau = (() => {
         ${manque.length ? `<p class="erreur petit">À remplir (onglet Héros ou Réglages) : ${manque.join(', ')}.</p>` : ''}
         ${compteur('Vie', 'corps')}
         ${compteur('Esprit', 'esprit')}
-        ${h.corps === 0 ? '<p class="erreur">⚠ 0 point de Vie : le héros meurt, sauf potion ou sort de soin.</p>' : ''}
+        ${h.mort ? '<p class="erreur">☠ Mort pendant cette quête.</p>'
+          : h.corps === 0 ? `<p class="erreur">⚠ 0 point de Vie : le héros meurt, sauf potion ou sort de soin.
+              ${h.secoursReporte ? '<button id="fi-secours">Décider maintenant…</button>' : ''}</p>` : ''}
         ${effetsHeros(h).length ? `<p class="etat-heros">${effetsHeros(h).map(echapperTexte).join(' · ')}</p>` : ''}
         ${compteur('Or', 'or', [1, 10])}
         <table class="caracs petite"><tbody>${ligne('Dés d’attaque', 'attaque')}${ligne('Dés de défense', 'defense')}</tbody></table>
         ${sortsDe(h).length ? `<h3>Sorts</h3><p class="petit">${sortsDe(h).map(x => `${Sorts.sort(x.id).nom}${x.utilise ? ' <span class="discret">(utilisé)</span>' : ''}`).join(' · ')}</p>` : ''}
         <h3>Inventaire</h3>
-        ${inventaire.length ? `<ul class="inventaire">${inventaire.map((o, k) => `<li><span>${echapperTexte(o.nom)}</span>
+        ${inventaire.length ? `<ul class="inventaire">${inventaire.map((o, k) => `<li><span>${echapperTexte(o.nom)}${Number.isFinite(o.soin) ? ` <span class="discret petit">(+${o.soin} Vie)</span>` : ''}</span>
+            ${estPotion(o) && !h.mort ? `<button class="petit-bouton" data-boire="${k}">Boire</button>` : ''}
             <button class="icone petit-bouton" data-retirer="${k}" aria-label="Retirer ${echapperTexte(o.nom)}">✕</button></li>`).join('')}</ul>`
           : '<p class="discret petit">Vide.</p>'}
         <button id="fi-ajouter">Ajouter un objet</button>
@@ -1928,6 +2144,21 @@ const VuePlateau = (() => {
         modifier(e => { e.heros.find(z => z.id === hid).inventaire.splice(+b.dataset.retirer, 1); });
         ouvrirFiche(hid);
       }));
+      fiche.querySelectorAll('[data-boire]').forEach(b => b.addEventListener('click', () => {
+        const k = +b.dataset.boire, o = h.inventaire[k];
+        let valeur = o.soin;
+        if (!Number.isFinite(valeur)) {
+          const r = prompt(`Combien de points de Vie rend « ${o.nom} » ? (voir la carte ; 0 si son effet est autre)`, '0');
+          if (r === null) return;
+          valeur = Math.max(0, Math.min(99, parseInt(r, 10) || 0));
+        }
+        boirePotion(hid, k, valeur);
+        ouvrirFiche(hid);
+      }));
+      fiche.querySelector('#fi-secours')?.addEventListener('click', () => {
+        fiche.hidden = true;
+        modifier(e => { delete e.heros.find(z => z.id === hid).secoursReporte; });
+      });
       fiche.querySelector('#fi-ajouter').addEventListener('click', () => {
         const nom = prompt(`Objet à ajouter à l’inventaire de ${h.nom} :`);
         if (!nom || !nom.trim()) return;

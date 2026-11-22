@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.16.0';
+const VERSION_APP = '0.17.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -576,7 +576,7 @@ function formulaireCartes(cartes) {
       <h2>Cartes trésor</h2>
       <p>La pioche virtuelle utilise ces cartes. Recopiez les vôtres si vous voulez que l’application pioche ;
          sinon, en jeu, vous pourrez toujours indiquer la vraie carte piochée. Elles restent sur cet iPad.</p>
-      <p class="discret petit">${total} carte(s) dans la pioche. « Valeur » : pièces d’or (or) ou points de Vie perdus (danger).
+      <p class="discret petit">${total} carte(s) dans la pioche. « Valeur » : pièces d’or (or), points de Vie perdus (danger) ou rendus (potion).
         Or, potions et objets sortent de la pioche jusqu’à la quête suivante ; les autres y retournent.</p>
       ${cartes.length ? `<div class="tableau-defilant"><table class="caracs"><thead><tr><th>Nom</th><th>Type</th><th>Valeur</th><th>Nombre</th><th></th></tr></thead><tbody>
         ${cartes.map((c, k) => `<tr><td>${echapper(c.nom || '')}${c.texte ? `<br><span class="discret petit">${echapper(c.texte)}</span>` : ''}</td>
