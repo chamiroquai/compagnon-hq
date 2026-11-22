@@ -467,3 +467,7 @@ svg .icone { pointer-events: none; overflow: visible; }
 .equipement-classe[open] summary { margin-bottom: 6px; }
 
 .des-combat { margin: 4px 0 8px; }
+
+/* Sort du Djinn : portes fermées que l'on peut toucher */
+.porte.cible-djinn rect:first-child { stroke: #7fd0ff; stroke-width: 4; animation: clignote-djinn 1.2s ease-in-out infinite; }
+@keyframes clignote-djinn { 50% { stroke-opacity: 0.35; } }

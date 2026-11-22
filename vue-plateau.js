@@ -247,7 +247,7 @@ const VuePlateau = (() => {
       if (!historique.length) return;
       etat = JSON.parse(historique.pop());
       partie.etat = etat;
-      selection = null; combat = null; conclusion = null; ciblage = false; fenetreActions = null; evenement = null; heritage = null; potionInconnue = null;
+      selection = null; combat = null; conclusion = null; ciblage = false; djinnPorteChoix = false; fenetreActions = null; evenement = null; heritage = null; potionInconnue = null;
       enregistrer();
       msg('Action annulée.');
       dessiner();
@@ -364,7 +364,8 @@ const VuePlateau = (() => {
         const cx = (Math.max(p.a[0], p.b[0]) + (horizontale ? 0.5 : 0)) * T;
         const cy = (Math.max(p.a[1], p.b[1]) + (horizontale ? 0 : 0.5)) * T;
         const w = horizontale ? T * 0.8 : T * 0.3, h = horizontale ? T * 0.3 : T * 0.8;
-        const cls = 'porte' + (ouverte ? ' ouverte' : '') + (!trouvee ? ' secrete' : '') + (porteProposee()?.id === p.id ? ' proposee' : '');
+        const cls = 'porte' + (ouverte ? ' ouverte' : '') + (!trouvee ? ' secrete' : '') + (porteProposee()?.id === p.id ? ' proposee' : '')
+          + (djinnPorteChoix && !ouverte && !vueMJ ? ' cible-djinn' : '');
         const gr = el('g', { class: cls, 'data-porte': p.id }, svg);
         el('rect', { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: 2 }, gr);
         // Zone tactile : toute la longueur de la porte, mais peu épaisse,
@@ -513,7 +514,7 @@ const VuePlateau = (() => {
     svg.addEventListener('click', evt => {
       const porte = evt.target.closest('[data-porte]');
       const heros = evt.target.closest('[data-heros]');
-      if (porte) return toucherPorte(porte.dataset.porte);
+      if (porte && !djinnPorteChoix) return toucherPorte(porte.dataset.porte);
       const c = caseTouchee(evt);
 
       const monstreTouche = evt.target.closest('[data-monstre]');
@@ -536,6 +537,11 @@ const VuePlateau = (() => {
         return selection ? poserHeros(c) : toucherCaseMJ(c);
       }
 
+      // Sort du Djinn : toucher la porte fermée à ouvrir.
+      if (djinnPorteChoix) {
+        if (porte && !etat.portesOuvertes.includes(porte.dataset.porte)) { djinnPorteChoix = false; return djinnPorte(porte.dataset.porte); }
+        return msg(porte ? 'Cette porte est déjà ouverte : touchez une porte fermée.' : 'Djinn : touchez une porte fermée (encadrée en bleu), ou « Retour ».');
+      }
       // Vue des joueurs : en mode attaque, toucher un monstre le choisit comme cible.
       if (ciblage) {
         if (monstreTouche) return choisirCible(monstreTouche.dataset.monstre);
@@ -641,6 +647,10 @@ const VuePlateau = (() => {
         html += `<strong>${actif.nom}</strong></span>
           <span>Touchez le monstre à attaquer.</span>
           <button id="tr-retour-attaque">Retour</button>`;
+      } else if (djinnPorteChoix) {
+        html += `<strong>${actif.nom}</strong></span>
+          <span>🌪 Djinn : touchez la porte à ouvrir.</span>
+          <button id="tr-retour-djinn">Retour</button>`;
       } else {
         // Bandeau réduit : les choix détaillés sont dans la fenêtre « Actions ».
         html += `<strong>${actif.nom}</strong></span>
@@ -650,11 +660,12 @@ const VuePlateau = (() => {
       }
       p.innerHTML = html;
       const sur = (sel, f) => p.querySelector(sel)?.addEventListener('click', f);
-      sur('#tr-actions', () => { fenetreActions = 'menu'; dessiner(); });
+      sur('#tr-actions', () => { fenetreActions = 'menu'; djinnPorteChoix = false; dessiner(); });
       sur('#tr-fin-tour', finDuTour);
       sur('#tr-fiche', () => ouvrirFiche(herosActif().id));
       sur('#tr-fin-zargon', finTourZargon);
       sur('#tr-retour-attaque', () => { ciblage = false; msg(''); dessiner(); });
+      sur('#tr-retour-djinn', () => { djinnPorteChoix = false; evenement = { genre: 'djinn', sort: 'djinn' }; msg(''); dessiner(); });
     }
 
     // Fenêtre « Actions » du héros actif : null (fermée), 'menu' (choix) ou 'sorts'.
@@ -746,7 +757,7 @@ const VuePlateau = (() => {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
-      fenetreActions = null; ciblage = false; combat = null; conclusion = null; evenement = null;
+      fenetreActions = null; ciblage = false; djinnPorteChoix = false; combat = null; conclusion = null; evenement = null;
       modifier(e => {
         const k = e.heros.find(z => z.id === actif.id);
         if (k) delete k.passeTour; // la Tempête ne dure qu'un tour
@@ -770,7 +781,7 @@ const VuePlateau = (() => {
 
     function porteProposee() {
       const h = herosActif();
-      if (!h || vueMJ || fenetreActions || ciblage || combat || conclusion || evenement || secours() || heritage) return null;
+      if (!h || vueMJ || fenetreActions || ciblage || djinnPorteChoix || combat || conclusion || evenement || secours() || heritage) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
@@ -982,6 +993,7 @@ const VuePlateau = (() => {
     /* ---------- Attaque d'un héros ---------- */
 
     let ciblage = false;  // le joueur doit toucher un monstre
+    let djinnPorteChoix = false; // sort du Djinn : le joueur doit toucher la porte à ouvrir
     let combat = null;    // { monstre, ambiance } : duel ouvert, on attend les crânes du héros
     let conclusion = null; // résultat d'un duel, affiché jusqu'à « Suivant »
 
@@ -1608,7 +1620,11 @@ const VuePlateau = (() => {
       }));
       boite.querySelectorAll('[data-reponse-sort]').forEach(b => b.addEventListener('click', () => repondreSort(b.dataset.reponseSort)));
       boite.querySelectorAll('[data-djinn-monstre]').forEach(b => b.addEventListener('click', () => djinnAttaque(b.dataset.djinnMonstre)));
-      boite.querySelectorAll('[data-djinn-porte]').forEach(b => b.addEventListener('click', () => djinnPorte(b.dataset.djinnPorte)));
+      boite.querySelector('#djinn-choisir-porte')?.addEventListener('click', () => {
+        evenement = null; djinnPorteChoix = true;
+        msg('Djinn : touchez la porte fermée à ouvrir (encadrée en bleu).');
+        dessiner();
+      });
       boite.querySelectorAll('[data-reveil]').forEach(b => b.addEventListener('click', () => {
         const hid = herosActif().id, ok = b.dataset.reveil === '1';
         modifier(e => { if (ok) delete e.heros.find(z => z.id === hid).endormi; });
@@ -1820,12 +1836,11 @@ const VuePlateau = (() => {
       const monstres = etat.monstres.filter(m => vu.has(Plateau.idx(L, m.x, m.y)));
       const portes = (quete.portes || []).filter(p => !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p)
         && [p.a, p.b].some(([x, y]) => vu.has(Plateau.idx(L, x, y))));
-      const nomPorte = p => { const z = [p.a, p.b].map(([x, y]) => Plateau.pieceDe(g, x, y)).find(Boolean); return z ? `Porte de la pièce ${z}` : 'Porte'; };
       return `<p class="titre-zargon">🌪 Djinn</p><p class="discret">${Sorts.sort('djinn').resume}</p>
         <h3 class="titre-section">Attaquer (5 dés)</h3>
         <div class="choix">${monstres.map(m => `<button data-djinn-monstre="${m.id}">${infoMonstre(m.type).nom}</button>`).join('') || '<span class="discret">Aucun monstre connu.</span>'}</div>
         <h3 class="titre-section">Ouvrir une porte</h3>
-        <div class="choix">${portes.map(p => `<button data-djinn-porte="${p.id}">${nomPorte(p)}</button>`).join('') || '<span class="discret">Aucune porte fermée connue.</span>'}</div>
+        <div class="choix">${portes.length ? '<button id="djinn-choisir-porte">Choisir la porte sur le plateau…</button>' : '<span class="discret">Aucune porte fermée connue.</span>'}</div>
         <div class="choix"><button id="ev-annuler">Annuler</button></div>`;
     }
 
