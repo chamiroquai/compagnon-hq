@@ -277,13 +277,18 @@ const VuePlateau = (() => {
         el('image', { href: img.donnees, x: -g0 * largeur, y: -h0 * hauteur, width: largeur, height: hauteur, preserveAspectRatio: 'none', class: 'image-plateau' }, svg);
       }
 
-      // 1. Cases
+      // 1. Cases. Thème « Pierre et couleurs » (theme-plateau.js) sauf avec une image ou en thème classique.
+      const theme = !avecImage && (options.themePlateau || 'pierre') === 'pierre';
+      svg.classList.toggle('theme-pierre', theme);
+      const remplissage = theme ? ThemePlateau.preparer(el('defs', {}, svg), el, T, Object.keys(g.pieces || {})) : null;
       const fond = el('g', {}, svg);
       for (let i = 0; i < L * H; i++) {
         const z = g.zones[i];
-        const cls = z === '#' ? 'c-roche' : z === '.' ? 'c-couloir' : 'c-piece';
-        el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T, height: T, class: 'case ' + cls, 'data-i': i }, fond);
+        const cls = z === '#' ? 'c-roche' : theme ? 'c-theme' : z === '.' ? 'c-couloir' : 'c-piece';
+        el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T, height: T, class: 'case ' + cls, 'data-i': i,
+          ...(theme && z !== '#' ? { fill: remplissage(z) } : {}) }, fond);
       }
+      if (theme) el('rect', { x: 0, y: 0, width: L * T, height: H * T, fill: 'url(#t-grain)', class: 'grain' }, fond);
 
       // 2. Escalier
       if (quete.escalier) {
@@ -348,19 +353,24 @@ const VuePlateau = (() => {
         }
       }
 
-      // 4. Murs (traits épais sur les bords entre zones différentes)
+      // 4. Murs (traits épais sur les bords entre zones différentes) ; thème pierre : trait clair sur une ombre.
+      const ombres = theme ? el('g', { class: 'murs-ombre' }, svg) : null;
       const murs = el('g', { class: 'murs' }, svg);
       for (let y = 0; y < H; y++) for (let x = 0; x < L; x++) {
         const i = Plateau.idx(L, x, y);
         if (x + 1 < L) {
           const j = i + 1;
-          if (Plateau.mur(g, i, j) && (visible(i) || visible(j)))
-            el('line', { x1: (x + 1) * T, x2: (x + 1) * T, y1: y * T, y2: (y + 1) * T }, murs);
+          if (Plateau.mur(g, i, j) && (visible(i) || visible(j))) {
+            const a = { x1: (x + 1) * T, x2: (x + 1) * T, y1: y * T, y2: (y + 1) * T };
+            el('line', a, murs); if (ombres) el('line', a, ombres);
+          }
         }
         if (y + 1 < H) {
           const j = i + L;
-          if (Plateau.mur(g, i, j) && (visible(i) || visible(j)))
-            el('line', { x1: x * T, x2: (x + 1) * T, y1: (y + 1) * T, y2: (y + 1) * T }, murs);
+          if (Plateau.mur(g, i, j) && (visible(i) || visible(j))) {
+            const a = { x1: x * T, x2: (x + 1) * T, y1: (y + 1) * T, y2: (y + 1) * T };
+            el('line', a, murs); if (ombres) el('line', a, ombres);
+          }
         }
       }
       // Contour du plateau

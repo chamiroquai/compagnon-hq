@@ -40,4 +40,5 @@ L'application affiche un bandeau « Nouvelle version disponible ».
 | `sw.js` | Fonctionnement hors ligne et mises à jour |
 | `manifest.webmanifest`, `icons/` | Installation sur l'écran d'accueil |
 | `inventaire.js` | Inventaire des héros en trois blocs : arme active, armure, autres objets |
+| `theme-plateau.js` | Thème « Pierre et couleurs » du plateau (motifs SVG originaux) |
 | `icones.js` | Pictogrammes du plateau (game-icons.net, CC BY 3.0 — voir `CREDITS.md`) |

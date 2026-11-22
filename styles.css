@@ -484,3 +484,12 @@ svg.avec-image:not(.murs-app) .murs { display: none; }
 .apercu-plateau { margin-top: 8px; border: 1px solid var(--bord); border-radius: 8px; overflow: hidden; background: #000; }
 .apercu-plateau svg { display: block; width: 100%; height: auto; }
 .grille-apercu { stroke: #ff3b30; stroke-width: 1.5; stroke-opacity: 0.8; }
+
+/* Thème « Pierre et couleurs » (theme-plateau.js) */
+svg.theme-pierre .case.c-theme { stroke: none; }
+svg.theme-pierre .case.c-roche { fill: #1a1612; }
+svg.theme-pierre .grain { pointer-events: none; }
+svg.theme-pierre .murs-ombre line { stroke: #000; stroke-opacity: 0.55; stroke-width: 8; stroke-linecap: square; }
+svg.theme-pierre .murs line { stroke: #f3efe4; stroke-width: 3; stroke-linecap: square; }
+svg.theme-pierre .contour { stroke: #14110d; stroke-width: 10; }
+svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }

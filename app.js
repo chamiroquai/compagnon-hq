@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.25.0';
+const VERSION_APP = '0.26.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -118,8 +118,9 @@ async function afficherPartie(id) {
     const caracs = await lireCaracs();
     const cartesTresor = await Stockage.lireReglage('cartesTresor') || [];
     const imagePlateau = await Stockage.lireReglage('imagePlateau') || null;
+    const themePlateau = await Stockage.lireReglage('themePlateau') || 'pierre';
     VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, {
-      quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor, imagePlateau,
+      quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor, imagePlateau, themePlateau,
       terminer: async issue => {
         if (!confirm(`Terminer la quête : ${issue === 'reussie' ? 'réussie' : 'échouée'} ?\nL’or et l’inventaire de chaque héros seront enregistrés dans son personnage.`)) return;
         const morts = await Heros.terminerQuete(partie, issue);
@@ -496,10 +497,11 @@ async function afficherAPropos() {
   const cartes = await Stockage.lireReglage('cartesTresor') || [];
   const equipement = await lireEquipementDepart();
   const imagePlateau = await Stockage.lireReglage('imagePlateau') || null;
+  const themePlateau = await Stockage.lireReglage('themePlateau') || 'pierre';
   vue.innerHTML = `
     ${formulaireCaracs(caracs)}
     ${formulaireEquipement(equipement)}
-    ${formulaireImagePlateau(imagePlateau)}
+    ${formulaireImagePlateau(imagePlateau, themePlateau)}
     ${formulaireCartes(cartes)}
     <section class="carte">
       <h2>Compagnon de quête ${VERSION_APP}</h2>
@@ -670,10 +672,18 @@ function brancherEquipement(equipement) {
 
 const MARGES_PLATEAU = [['gauche', 'Gauche'], ['haut', 'Haut'], ['droite', 'Droite'], ['bas', 'Bas']];
 
-function formulaireImagePlateau(img) {
+function formulaireImagePlateau(img, theme) {
   return `
     <section class="carte">
-      <h2>Image du plateau</h2>
+      <h2>Apparence du plateau</h2>
+      <label class="champ-perso large"><span>Plateau dessiné par l’application</span>
+        <select id="theme-plateau">
+          <option value="pierre" ${theme === 'pierre' ? 'selected' : ''}>Pierre et couleurs (dalles claires, une couleur par pièce)</option>
+          <option value="classique" ${theme === 'classique' ? 'selected' : ''}>Classique (sombre et uni)</option>
+        </select></label>
+      <p class="discret petit">Une image de votre plateau (ci-dessous), si vous en chargez une, remplace ce dessin
+         pour les quêtes sur le plateau du jeu de base.</p>
+      <h3>Image du plateau</h3>
       <p>Une photo ou un scan de votre plateau, affiché sous les pions pendant le jeu (seulement pour les quêtes
          sur le plateau du jeu de base, 26 × 19 cases). L’image reste sur cet iPad.</p>
       <div class="ligne">
@@ -725,6 +735,10 @@ function dessinerApercuPlateau(img) {
 
 function brancherImagePlateau(img) {
   const etat = $('#img-etat');
+  $('#theme-plateau').addEventListener('change', async () => {
+    await Stockage.ecrireReglage('themePlateau', $('#theme-plateau').value);
+    etat.textContent = 'Apparence enregistrée.';
+  });
   const choix = document.createElement('input');
   choix.type = 'file'; choix.accept = 'image/*'; choix.hidden = true;
   vue.appendChild(choix);
