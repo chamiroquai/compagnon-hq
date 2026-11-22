@@ -92,6 +92,10 @@ const QUETE_DEMO = {
   ],
   // Monstres : type, case. Une figurine peut avoir ses propres caractéristiques,
   // ex. { type: 'sorcierEffroi', x, y, nom: '…', caracs: { deplacement, attaque, defense, corps, esprit } }.
+  // Comportement (facultatif) : « chasse » (par défaut : avance vers le héros le plus proche,
+  // s'en rapproche au mieux s'il ne peut pas l'atteindre), « garde » (ne bouge pas, attaque
+  // au contact) ou « piece » (chasse sans quitter sa pièce). Valeur par défaut de toute la
+  // quête : champ « comportementMonstres » à la racine.
   monstres: [
     { id: 'mo1', type: 'gobelin', x: 3, y: 2 },
     { id: 'mo2', type: 'orque', x: 9, y: 2 },
@@ -104,8 +108,8 @@ const QUETE_DEMO = {
     { id: 'mo9', type: 'momie', x: 24, y: 7 },
     { id: 'mo10', type: 'abomination', x: 3, y: 12 },
     { id: 'mo11', type: 'orque', x: 13, y: 11 },
-    { id: 'mo12', type: 'momie', x: 19, y: 12 },
-    { id: 'mo13', type: 'guerrierEffroi', x: 23, y: 11 },
+    { id: 'mo12', type: 'momie', x: 19, y: 12, comportement: 'piece' },
+    { id: 'mo13', type: 'guerrierEffroi', x: 23, y: 11, comportement: 'garde' },
     { id: 'mo14', type: 'zombie', x: 9, y: 16 },
     { id: 'mo15', type: 'gargouille', x: 17, y: 16 },
     { id: 'mo16', type: 'orque', x: 23, y: 16 },

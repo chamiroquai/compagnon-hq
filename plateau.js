@@ -241,8 +241,10 @@ const Plateau = (() => {
   // Règles : une case à la fois, sans diagonale ; les monstres n'ouvrent pas les portes
   // (porte fermée = mur) ; pas à travers la roche, les meubles ni les héros ;
   // ils peuvent traverser un autre monstre mais pas s'arrêter sur sa case.
-  function passageMonstre(g, etat, i, j) {
+  // zone (facultatif) : le monstre ne quitte pas cette zone (comportement « piece »).
+  function passageMonstre(g, etat, i, j, zone = null) {
     if (g.zones[j] === '#') return false;
+    if (zone !== null && g.zones[j] !== zone) return false;
     if (!ouvert(g, etat, i, j)) return false;
     const x = j % g.L, y = Math.floor(j / g.L);
     if (meubleEn(g, x, y)) return false;
@@ -258,6 +260,17 @@ const Plateau = (() => {
     if (y > 0) v.push(i - g.L);
     if (y < g.H - 1) v.push(i + g.L);
     return v;
+  }
+
+  // Comportements possibles d'un monstre (décision du 22/11/2026), réglables par la quête :
+  // champ « comportement » du monstre, sinon « comportementMonstres » de la quête, sinon « chasse ».
+  //  - chasse : avance vers le héros le plus proche ; s'il ne peut pas l'atteindre, s'en rapproche ;
+  //  - garde  : ne bouge jamais, attaque un héros qui vient à son contact ;
+  //  - piece  : comme « chasse », sans jamais quitter la zone (pièce ou couloir) où la quête l'a placé.
+  const COMPORTEMENTS = ['chasse', 'garde', 'piece'];
+  function comportementDe(g, monstre) {
+    const c = monstre.comportement || g.quete.comportementMonstres;
+    return COMPORTEMENTS.includes(c) ? c : 'chasse';
   }
 
   // Plan d'un monstre : vers la case libre la plus proche (en nombre de pas)
@@ -277,6 +290,12 @@ const Plateau = (() => {
     const ici = attaquables(depart);
     if (ici.length) return { chemin: [], cible: ici[0].id, atteint: true };
 
+    const comportement = comportementDe(g, monstre);
+    if (comportement === 'garde') return { chemin: [], cible: null, atteint: false };
+    // « piece » : zone de la case où la quête a posé le monstre (monstre errant : sa zone actuelle).
+    const origine = (g.quete.monstres || []).find(q => q.id === monstre.id) || monstre;
+    const zone = comportement === 'piece' ? g.zones[idx(g.L, origine.x, origine.y)] : null;
+
     // Parcours en largeur : distance et case précédente pour chaque case atteignable.
     const precedent = new Map([[depart, null]]);
     const file = [depart];
@@ -285,12 +304,12 @@ const Plateau = (() => {
       const c = file.shift();
       if (c !== depart && !occupeeParMonstre(c) && attaquables(c).length) { but = c; break; }
       for (const v of voisins(g, c)) {
-        if (precedent.has(v) || !passageMonstre(g, etat, c, v)) continue;
+        if (precedent.has(v) || !passageMonstre(g, etat, c, v, zone)) continue;
         precedent.set(v, c);
         file.push(v);
       }
     }
-    if (but === null) return planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre);
+    if (but === null) return planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre, zone);
 
     // Chemin complet, puis limité à la portée ; on recule si la case d'arrivée est occupée.
     const complet = [];
@@ -340,7 +359,7 @@ const Plateau = (() => {
   // Aucun héros atteignable (porte fermée, passage bouché…) : le monstre contourne
   // ce qu'il peut et s'arrête, dans la limite de son déplacement, sur la case libre
   // la plus proche d'un héros (décision du 22/11/2026). S'il ne gagne rien, il reste.
-  function planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre) {
+  function planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre, zone = null) {
     const rien = { chemin: [], cible: null, atteint: false };
     if (!vivants.length || portee <= 0) return rien;
     const depart = idx(g.L, monstre.x, monstre.y);
@@ -361,7 +380,7 @@ const Plateau = (() => {
       }
       if (pas.get(c) >= portee) continue;
       for (const v of voisins(g, c)) {
-        if (precedent.has(v) || !passageMonstre(g, etat, c, v)) continue;
+        if (precedent.has(v) || !passageMonstre(g, etat, c, v, zone)) continue;
         precedent.set(v, c);
         pas.set(v, pas.get(c) + 1);
         file.push(v);
@@ -629,7 +648,9 @@ const Plateau = (() => {
     for (const m of q.monstres || []) {
       idUnique(m, 'monstre');
       if (!libre(m.x, m.y)) err.push(`monstre ${m.id} : case hors du plateau ou dans la roche`);
+      if (m.comportement != null && !COMPORTEMENTS.includes(m.comportement)) err.push(`monstre ${m.id} : comportement inconnu « ${m.comportement} » (${COMPORTEMENTS.join(', ')})`);
     }
+    if (q.comportementMonstres != null && !COMPORTEMENTS.includes(q.comportementMonstres)) err.push(`comportementMonstres : valeur inconnue « ${q.comportementMonstres} » (${COMPORTEMENTS.join(', ')})`);
     for (const p of q.pieges || []) {
       idUnique(p, 'piège');
       if (!['fosse', 'bloc', 'lance'].includes(p.type)) err.push(`piège ${p.id} : type inconnu « ${p.type} » (fosse, bloc ou lance)`);
@@ -659,6 +680,6 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
     passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
 })();
