@@ -937,6 +937,7 @@ const VuePlateau = (() => {
       const h = etat.heros.find(k => k.id === d.heros);
       const m = etat.monstres.find(k => k.id === d.monstre);
       const degats = Math.max(0, d.cranes - blancs);
+      const vieHerosAvant = h.corps;
       modifier(e => {
         const k = e.heros.find(z => z.id === d.heros);
         if (degats > 0) delete k.peauRoc;
@@ -945,7 +946,7 @@ const VuePlateau = (() => {
         e.zargon.n++; preparerZargon(e);
       });
       conclusion = {
-        genre: 'zargon', heros: h.id, monstre: m.id, type: m.type, tirage: d.tirage, cranes: d.cranes, blancs, degats, cle: d.cle,
+        genre: 'zargon', heros: h.id, monstre: m.id, type: m.type, tirage: d.tirage, cranes: d.cranes, blancs, degats, cle: d.cle, vieHerosAvant,
         ambiance: Ambiance.tirer(degats ? 'heroBlesse' : 'heroIndemne', { heros: h.nom, monstre: infoMonstre(m.type).nom }),
       };
       dessiner();
@@ -1032,7 +1033,7 @@ const VuePlateau = (() => {
       const valeurs = { heros: h.nom, monstre: nom, type: m.type };
       conclusion = {
         genre: 'heros', heros: h.id, monstre: m.id, type: m.type, monstreCourt: infoMonstre(m.type).court,
-        tirage, cranes, noirs, degats, vieMonstre: vieApres, vieMonstreMax: m.corpsMax, cle: 'h' + Date.now(), note: noteSommeil,
+        tirage, cranes, noirs, degats, vieMonstre: vieApres, vieMonstreAvant: vieAvant, vieMonstreMax: m.corpsMax, cle: 'h' + Date.now(), note: noteSommeil,
         ambiance: Ambiance.tirer(vieApres === 0 ? 'mort' : degats ? 'monstreBlesse' : 'monstreIndemne', valeurs),
       };
       msg('');
@@ -1821,7 +1822,7 @@ const VuePlateau = (() => {
     // Fait rouler les dés d'une fenêtre qui vient de s'afficher.
     function animerDes(boite) {
       const zone = boite.querySelector('.des-lances');
-      if (!zone || animes.has(zone.dataset.cle)) return;
+      if (!zone || animes.has(zone.dataset.cle)) return 0;
       animes.add(zone.dataset.cle);
       const des = [...zone.querySelectorAll('.de')];
       const faces = ['crane', 'blanc', 'noir'];
@@ -1840,13 +1841,41 @@ const VuePlateau = (() => {
           suite.forEach(e => e.classList.remove('masque'));
         }
       }, 90);
+      return 900;
     }
 
-    function figurine(cote, html, nom, vie, vieMax, classe = '') {
-      return `<figure class="combattant ${cote} ${classe}">
+    /* Figurine d'un duel. « deroule » (facultatif) : { vieAvant, classeApres } — la vie d'avant le
+       coup est affichée pendant les dés et l'ambiance, puis remplacée par « vie » (voir deroulerEtapes). */
+    function figurine(cote, html, nom, vie, vieMax, classe = '', deroule = null) {
+      const txt = v => `♥ ${v ?? '?'}${vieMax != null ? ' / ' + vieMax : ''}`;
+      const change = deroule && deroule.vieAvant != null && deroule.vieAvant !== vie;
+      return `<figure class="combattant ${cote} ${classe}"${deroule?.classeApres ? ` data-classe-apres="${deroule.classeApres}"` : ''}>
         <div class="portrait">${html}</div>
-        <figcaption>${classe.includes('attaquant') ? '<span class="role">⚔ attaque</span>' : ''}<strong>${echapperTexte(nom)}</strong><span class="vie">♥ ${vie ?? '?'}${vieMax != null ? ' / ' + vieMax : ''}</span></figcaption>
+        <figcaption>${classe.includes('attaquant') ? '<span class="role">⚔ attaque</span>' : ''}<strong>${echapperTexte(nom)}</strong><span class="vie"${change ? ` data-apres="${txt(vie)}"` : ''}>${txt(change ? deroule.vieAvant : vie)}</span></figcaption>
       </figure>`;
+    }
+
+    /* Déroulé d'un résultat de combat : dés (s'ils roulent), puis l'ambiance (.etape-1), puis après
+       une pause les dégâts (.etape-2, vies mises à jour, « vaincu »). Une fois vu, il s'affiche
+       directement dans son état final si la fenêtre est redessinée. */
+    const etapesVues = new Set();
+    function deroulerEtapes(boite, dureeDes) {
+      const porteur = boite.querySelector('[data-etapes]');
+      if (!porteur) return;
+      const cle = porteur.dataset.etapes;
+      const e1 = boite.querySelectorAll('.etape-1'), e2 = boite.querySelectorAll('.etape-2');
+      const fin = eclat => {
+        boite.querySelectorAll('[data-apres]').forEach(el => { el.textContent = el.dataset.apres; if (eclat) el.classList.add('touche'); });
+        boite.querySelectorAll('[data-classe-apres]').forEach(el => el.classList.add(...el.dataset.classeApres.split(' ').filter(Boolean)));
+        e1.forEach(el => el.classList.remove('masque')); e2.forEach(el => el.classList.remove('masque'));
+      };
+      if (etapesVues.has(cle)) return fin(false);
+      etapesVues.add(cle);
+      e1.forEach(el => el.classList.add('masque')); e2.forEach(el => el.classList.add('masque'));
+      setTimeout(() => {
+        e1.forEach(el => el.classList.remove('masque'));
+        setTimeout(() => fin(true), 1100);
+      }, dureeDes + 150);
     }
 
     function boutonsNombre(n, attribut) {
@@ -1868,8 +1897,10 @@ const VuePlateau = (() => {
         const nomM = infoMonstre(c.type).nom, court = infoMonstre(c.type).court;
         const vieM = mVivant ? mVivant.corps : c.vieMonstre ?? 0;
         const attH = c.genre === 'heros' ? ' attaquant' : ' defenseur', attM = c.genre === 'zargon' ? ' attaquant' : ' defenseur';
-        const gauche = figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, (h.corps === 0 ? 'vaincu' : '') + attH);
-        const droite = figurine('droite', Portraits.monstre(c.type, court), nomM, vieM, mVivant?.corpsMax ?? c.vieMonstreMax, (vieM === 0 ? 'vaincu' : '') + attM);
+        const gauche = figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, attH,
+          { vieAvant: c.genre === 'zargon' ? c.vieHerosAvant : null, classeApres: h.corps === 0 ? 'vaincu' : '' });
+        const droite = figurine('droite', Portraits.monstre(c.type, court), nomM, vieM, mVivant?.corpsMax ?? c.vieMonstreMax, attM,
+          { vieAvant: c.genre === 'heros' ? c.vieMonstreAvant : null, classeApres: vieM === 0 ? 'vaincu' : '' });
         let texte;
         if (c.genre === 'zargon') {
           texte = c.cranes === 0
@@ -1882,13 +1913,15 @@ const VuePlateau = (() => {
             + (c.degats ? `${nomM} perd ${c.degats} point${c.degats > 1 ? 's' : ''} de Vie.` : 'aucune blessure.')
             + (c.vieMonstre === 0 ? ` ${nomM} est vaincu !` : '') + (c.note || '');
         }
-        html = `<div class="duel">${gauche}<div class="centre">⚔</div>${droite}</div>
+        html = `<div class="duel" data-etapes="${c.cle}:fin">${gauche}<div class="centre">⚔</div>${droite}</div>
           <p class="legende">${c.genre === 'zargon' ? `Attaque de ${nomM}` : `Défense de ${nomM}`}</p>
           ${htmlDes(c.tirage, c.cle)}
           <div class="apres-des">
-            <p class="resultat">${echapperTexte(texte)}</p>
-            <p class="ambiance">${echapperTexte(c.ambiance)}</p>
-            <div class="choix"><button id="md-suivant" class="principal">${c.genre === 'zargon' ? 'Suivant' : 'Fermer'}</button></div>
+            <p class="ambiance etape-1">${echapperTexte(c.ambiance)}</p>
+            <div class="etape-2">
+              <p class="resultat">${echapperTexte(texte)}</p>
+              <div class="choix"><button id="md-suivant" class="principal">${c.genre === 'zargon' ? 'Suivant' : 'Fermer'}</button></div>
+            </div>
           </div>`;
       } else if (combat) {
         // Duel lancé par le héros actif : on attend ses crânes.
@@ -2002,7 +2035,7 @@ const VuePlateau = (() => {
       boite.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
       if (evenement) brancherEvenement(boite);
       if ((secours() || heritage) && !evenement && !conclusion && !combat && !z?.defense) brancherSecours(boite);
-      animerDes(boite);
+      deroulerEtapes(boite, animerDes(boite));
     }
 
     /* ---------- Héros à terre, potions, mort ----------

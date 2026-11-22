@@ -444,3 +444,8 @@ svg .icone { pointer-events: none; overflow: visible; }
 /* Compteur de pas du tour : numéro discret dans le coin des cases parcourues. */
 .trace-pas { pointer-events: none; }
 .trace-pas text { fill: #fff; opacity: 0.5; font-size: 12px; font-weight: 700; text-anchor: start; paint-order: stroke; stroke: #000; stroke-width: 2px; stroke-opacity: 0.5; }
+
+/* Résultat d'un combat : les points de Vie perdus « clignotent » quand ils sont décomptés. */
+.combattant .vie.touche { animation: touche 0.9s ease-out; }
+@keyframes touche { 0% { color: #ff5a4a; transform: scale(1.35); } 100% { color: inherit; transform: scale(1); } }
+.combattant .vie { display: inline-block; }
