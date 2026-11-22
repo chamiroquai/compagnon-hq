@@ -148,7 +148,7 @@ const VuePlateau = (() => {
               <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : bouton « Fiche » en haut pour le héros actif, ou touchez sa pastille dans l’ordre de jeu, ou le pion d’un autre héros.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche. Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
-              <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on cherche le trésor depuis une case voisine d’un coffre.</li>
+              <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on ne peut chercher le trésor que depuis une case voisine d’un coffre (le bouton reste grisé sinon).</li>
               <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
               <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
@@ -1285,12 +1285,13 @@ const VuePlateau = (() => {
       const h = herosActif();
       const piece = Plateau.pieceDe(g, h.x, h.y);
       if (!piece) return msg('Les trésors ne se trouvent que dans les pièces, pas dans les couloirs.');
+      // Règle maison bloquante (décision de l'utilisateur, exception au principe d'arbitrage).
+      if (coffreTropLoin(h)) return msg(`Il y a un coffre dans cette pièce : ${h.nom} doit d’abord se placer sur une case voisine d’un coffre pour chercher un trésor.`);
       const avert = [];
       if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
       if (etat.monstres.some(m => Plateau.pieceDe(g, m.x, m.y) === piece && etat.revele.includes(Plateau.idx(L, m.x, m.y))))
         avert.push('Un monstre est dans la pièce : la règle interdit de fouiller.');
       if ((etat.fouillesTresor[h.id] || []).includes(piece)) avert.push(`${h.nom} a déjà fouillé cette pièce (une fois par héros).`);
-      if (coffreTropLoin(h)) avert.push(`Il y a un coffre dans la pièce : ${h.nom} doit se tenir sur une case voisine d’un coffre (règle maison).`);
       const avertissement = avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '';
       const piegeants = (quete.mobilier || []).filter(m => m.piege && Plateau.pieceDe(g, m.x, m.y) === piece
         && !etat.piegesMobilier[m.id]?.desamorce && !etat.piegesMobilier[m.id]?.declenche);
@@ -1963,13 +1964,13 @@ const VuePlateau = (() => {
             <div class="choix">
               ${cibles.length ? `<button id="md-attaquer" class="${fait ? '' : 'principal'}">Attaquer</button>` : ''}
               ${sortsDe(h).some(x => !x.utilise) ? '<button id="md-sorts">Lancer un sort</button>' : ''}
-              <button id="md-fouille-tresor">Fouiller : trésor${coffreTropLoin(h) ? ' ⚠' : ''}</button>
+              <button id="md-fouille-tresor"${coffreTropLoin(h) ? ' disabled' : ''}>Fouiller : trésor</button>
               <button id="md-fouille-portes">Fouiller : portes secrètes</button>
               <button id="md-fouille-pieges">Fouiller : pièges</button>
               ${desamorcables.length ? '<button id="md-desamorcer">Désamorcer le piège</button>' : ''}
               ${meublesDesamorcables().map(m => `<button data-desarmer-meuble="${m.id}">Désamorcer : ${echapperTexte(m.nom)}</button>`).join('')}
             </div>
-            ${coffreTropLoin(h) ? '<p class="discret petit">Il y a un coffre dans cette pièce : pour chercher un trésor, placez-vous sur une case voisine d’un coffre (règle maison).</p>' : ''}
+            ${coffreTropLoin(h) ? '<p class="erreur petit">Il y a un coffre dans cette pièce : pour chercher un trésor, placez-vous d’abord sur une case voisine d’un coffre.</p>' : ''}
             ${monstreVisible() ? '<p class="discret petit">Un monstre est visible : les règles interdisent de fouiller (l’application vous laissera faire, avec un avertissement).</p>' : ''}
 
             <div class="choix"><button id="md-fiche">Fiche de ${echapperTexte(h.nom)}</button></div>`;
