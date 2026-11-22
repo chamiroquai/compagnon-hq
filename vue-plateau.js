@@ -147,7 +147,7 @@ const VuePlateau = (() => {
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
-              <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran.</li>
+              <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
                   dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
               <li>Touchez un message pour le faire disparaître.</li>
@@ -2244,11 +2244,59 @@ const VuePlateau = (() => {
       msg(vueMJ ? 'Vue MJ : tout est visible. Les joueurs ne doivent pas regarder !' : 'Vue des joueurs.');
       dessiner();
     });
+    const ZOOM_MIN = 0.6, ZOOM_MAX = 4;
     const changerZoom = f => {
-      zoom = Math.min(3, Math.max(0.6, Math.round(zoom * f * 10) / 10));
+      zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(zoom * f * 10) / 10));
       try { localStorage.setItem('zoomJeu', zoom); } catch { }
       appliquerZoom();
     };
+
+    /* Pincer pour zoomer le plateau (et non la page Safari). Deux doigts : le point du plateau
+       situé entre les doigts reste sous les doigts ; déplacer les deux doigts fait aussi glisser
+       le plateau. Un doigt : défilement normal du cadre. */
+    let pince = null;
+    const milieu = t => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+    const ecart = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1;
+    cadre.addEventListener('touchstart', e => {
+      if (e.touches.length !== 2) return;
+      const m = milieu(e.touches), r = cadre.getBoundingClientRect();
+      const larg = svg.width.baseVal.value || 1, haut = svg.height.baseVal.value || 1;
+      // Position (de 0 à 1) dans le plateau du point situé entre les doigts.
+      const ox = svg.getBoundingClientRect();
+      pince = { d0: ecart(e.touches), z0: zoom,
+        fx: (m.x - ox.left) / larg, fy: (m.y - ox.top) / haut, r };
+      e.preventDefault();
+    }, { passive: false });
+    let image = 0;
+    cadre.addEventListener('touchmove', e => {
+      if (!pince || e.touches.length !== 2) return;
+      e.preventDefault(); // pas de zoom ni de défilement de la page
+      const t = [e.touches[0], e.touches[1]];
+      if (image) return;
+      image = requestAnimationFrame(() => {
+        image = 0;
+        zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, pince.z0 * ecart(t) / pince.d0));
+        appliquerZoom();
+        // Ramène sous les doigts le point du plateau qui s'y trouvait au début.
+        const m = milieu(t), ox = svg.getBoundingClientRect();
+        cadre.scrollLeft += ox.left + pince.fx * svg.width.baseVal.value - m.x;
+        cadre.scrollTop += ox.top + pince.fy * svg.height.baseVal.value - m.y;
+      });
+    }, { passive: false });
+    const finPince = e => {
+      if (!pince || e.touches.length >= 2) return;
+      pince = null;
+      zoom = Math.round(zoom * 100) / 100;
+      try { localStorage.setItem('zoomJeu', zoom); } catch { }
+    };
+    cadre.addEventListener('touchend', finPince);
+    cadre.addEventListener('touchcancel', finPince);
+    // Safari : les « gestes » (pincement) zoomeraient toute la page ; on les bloque sur l'écran de jeu.
+    const bloquerGeste = e => { if (document.body.classList.contains('mode-jeu')) e.preventDefault(); };
+    if (!window.__gestesBloques) {
+      window.__gestesBloques = true;
+      ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, bloquerGeste, { passive: false }));
+    }
     conteneur.querySelector('#pl-ajuster').addEventListener('click', () => { zoom = 1; changerZoom(1); });
     conteneur.querySelector('#pl-plus').addEventListener('click', () => changerZoom(1.25));
     conteneur.querySelector('#pl-moins').addEventListener('click', () => changerZoom(0.8));
