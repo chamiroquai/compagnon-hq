@@ -1833,7 +1833,7 @@ const VuePlateau = (() => {
       const minuterie = setInterval(() => {
         t += 90;
         des.forEach(d => { d.textContent = Regles.afficher([faces[Math.floor(Math.random() * 3)]]); });
-        if (t >= 900) {
+        if (t >= DUREE_DES) {
           clearInterval(minuterie);
           const final = zone.dataset.final.split(',');
           des.forEach((d, k) => { d.textContent = Regles.afficher([final[k]]); });
@@ -1841,7 +1841,7 @@ const VuePlateau = (() => {
           suite.forEach(e => e.classList.remove('masque'));
         }
       }, 90);
-      return 900;
+      return DUREE_DES;
     }
 
     /* Figurine d'un duel. « deroule » (facultatif) : { vieAvant, classeApres } — la vie d'avant le
@@ -1859,6 +1859,8 @@ const VuePlateau = (() => {
        une pause les dégâts (.etape-2, vies mises à jour, « vaincu »). Une fois vu, il s'affiche
        directement dans son état final si la fenêtre est redessinée. */
     const etapesVues = new Set();
+    // Durées du déroulé (ms) : roulement des dés, pause avant l'ambiance, temps de lecture de l'ambiance.
+    const DUREE_DES = 1200, PAUSE_AVANT_AMBIANCE = 700, LECTURE_AMBIANCE = 2500;
     function deroulerEtapes(boite, dureeDes) {
       const porteur = boite.querySelector('[data-etapes]');
       if (!porteur) return;
@@ -1874,8 +1876,8 @@ const VuePlateau = (() => {
       e1.forEach(el => el.classList.add('masque')); e2.forEach(el => el.classList.add('masque'));
       setTimeout(() => {
         e1.forEach(el => el.classList.remove('masque'));
-        setTimeout(() => fin(true), 1100);
-      }, dureeDes + 150);
+        setTimeout(() => fin(true), LECTURE_AMBIANCE);
+      }, dureeDes + PAUSE_AVANT_AMBIANCE);
     }
 
     function boutonsNombre(n, attribut) {
