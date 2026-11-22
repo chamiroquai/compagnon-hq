@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.17.0';
+const VERSION_APP = '0.18.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -141,7 +141,13 @@ async function afficherPartie(id) {
       <div id="zone-plateau">
         ${partie.quete ? '' : `
           <p class="discret">Aucune quête en cours dans cette partie.</p>
-          <button id="btn-demo" class="principal">Commencer la quête de démonstration</button>`}
+          <div class="ligne">
+            <button id="btn-demo" class="principal">Commencer la quête de démonstration</button>
+            <button id="btn-ouvrir-quete">Ouvrir une quête (fichier)…</button>
+          </div>
+          <p class="discret petit">Une quête au format du Compagnon (fichier .json), par exemple depuis l’app Fichiers.
+            Elle est copiée dans cette partie et reste sur cet iPad.</p>
+          <p id="erreurs-quete" class="erreur petit" hidden></p>`}
       </div>
       ${partie.quete ? '<div class="ligne fin-quete"><button id="btn-abandon" class="danger">Abandonner la quête</button></div>' : ''}
     </section>
@@ -178,13 +184,35 @@ async function afficherPartie(id) {
     });
     $('#btn-abandon').addEventListener('click', abandonnerQuete);
   } else {
-    $('#btn-demo').addEventListener('click', async () => {
-      // Copie de la quête dans la partie : la partie reste lisible même si la quête change plus tard.
-      partie.quete = JSON.parse(JSON.stringify(QUETE_DEMO));
+    // Copie de la quête dans la partie : la partie reste lisible même si la quête change plus tard.
+    const demarrer = async quete => {
+      partie.quete = JSON.parse(JSON.stringify(quete));
       partie.reglages = { porteeCouloir: Plateau.PORTEE_DEFAUT, ...(partie.reglages || {}) };
       partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages), await Heros.groupeDe(partie));
       await enregistrerPartie();
       afficherPartie(id);
+    };
+    $('#btn-demo').addEventListener('click', () => demarrer(QUETE_DEMO));
+    // Quête depuis un fichier : lue sur l'appareil, vérifiée, jamais envoyée ailleurs.
+    const choixQuete = document.createElement('input');
+    choixQuete.type = 'file'; choixQuete.accept = '.json,application/json'; choixQuete.hidden = true;
+    $('#zone-plateau').appendChild(choixQuete);
+    $('#btn-ouvrir-quete').addEventListener('click', () => choixQuete.click());
+    choixQuete.addEventListener('change', async () => {
+      const f = choixQuete.files[0];
+      choixQuete.value = '';
+      if (!f) return;
+      const zoneErr = $('#erreurs-quete');
+      const montrer = lignes => { zoneErr.innerHTML = lignes.map(echapper).join('<br>'); zoneErr.hidden = false; };
+      if (f.size > 2_000_000) return montrer(['Fichier trop gros pour une quête (2 Mo au plus).']);
+      let q;
+      try { q = JSON.parse(await f.text()); } catch { return montrer(['Ce fichier n’est pas du JSON lisible.']); }
+      const err = Plateau.verifierQuete(q);
+      if (err.length) return montrer([`Quête refusée (${err.length} problème${err.length > 1 ? 's' : ''}) :`, ...err.slice(0, 12).map(e => '• ' + e), ...(err.length > 12 ? ['…'] : [])]);
+      if (!q.titre) q.titre = f.name.replace(/\.json$/i, '');
+      if (!q.id) q.id = 'fichier-' + Date.now();
+      if (!confirm(`Commencer la quête « ${q.titre} » dans cette partie ?`)) return;
+      demarrer(q);
     });
   }
 

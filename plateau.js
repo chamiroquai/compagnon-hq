@@ -471,6 +471,10 @@ const Plateau = (() => {
       if (!['fosse', 'bloc', 'lance'].includes(p.type)) err.push(`piège ${p.id} : type inconnu « ${p.type} » (fosse, bloc ou lance)`);
       if (!libre(p.x, p.y)) err.push(`piège ${p.id} : case hors du plateau ou dans la roche`);
     }
+    if (q.escalier) {
+      const { x, y } = q.escalier;
+      if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([dx, dy]) => libre(x + dx, y + dy))) err.push('escalier : ses 2 × 2 cases doivent être sur le plateau, hors de la roche');
+    }
     if (!Array.isArray(q.departs) || q.departs.length < 1) err.push('aucune case de départ pour les héros');
     else q.departs.forEach(([x, y], n) => { if (!libre(x, y)) err.push(`départ n° ${n + 1} : case invalide`); });
     return err;
