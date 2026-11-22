@@ -147,7 +147,7 @@ const VuePlateau = (() => {
                   Touchez à nouveau le héros pour s’arrêter. Les numéros s’effacent à la fin du tour.</li>
               <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : bouton « Fiche » en haut pour le héros actif, ou touchez sa pastille dans l’ordre de jeu, ou le pion d’un autre héros.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
-              <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
+              <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche. Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
               <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
@@ -490,7 +490,12 @@ const VuePlateau = (() => {
       }
       // Toucher le héros actif : commencer ou arrêter son déplacement.
       const actifTouche = herosActif();
-      if (actifTouche && (heros?.dataset.heros === actifTouche.id || (c && c.x === actifTouche.x && c.y === actifTouche.y))) return basculerDeplacement();
+      if (actifTouche && (heros?.dataset.heros === actifTouche.id || (c && c.x === actifTouche.x && c.y === actifTouche.y))) {
+        // Contre une porte fermée écartée par « Pas maintenant » : le toucher fait revenir l'invite.
+        const cle = porteRefuseeIci(actifTouche);
+        if (cle) { refusees.delete(cle); return dessiner(); }
+        return basculerDeplacement();
+      }
       // Pendant un déplacement, toucher une case fait avancer le héros actif.
       if (c && etat.tour?.deplacement) return avancer(c);
       // Toucher le pion d'un héros (hors déplacement) ouvre sa fiche.
@@ -717,6 +722,14 @@ const VuePlateau = (() => {
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
         !refusees.has(`${p.id}@${h.x},${h.y}`)) || null;
+    }
+
+    // Clé (« porte@x,y ») d'une porte fermée contre le héros, refusée à cet endroit, ou null.
+    function porteRefuseeIci(h) {
+      const p = (quete.portes || []).find(q =>
+        !etat.portesOuvertes.includes(q.id) && Plateau.porteVisible(etat, q) &&
+        [q.a, q.b].some(([x, y]) => x === h.x && y === h.y) && refusees.has(`${q.id}@${h.x},${h.y}`));
+      return p ? `${p.id}@${h.x},${h.y}` : null;
     }
 
     // Case de l'escalier (2 × 2 cases à partir de quete.escalier).
