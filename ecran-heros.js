@@ -17,13 +17,19 @@ const Heros = (() => {
     return m[0].toUpperCase() + (m[1] || '').toLowerCase();
   }
 
-  // Nouveau personnage : caractéristiques de départ copiées depuis les Réglages.
-  function creer(nom, classe, caracs) {
+  // Copie de l'équipement de départ de la classe (Réglages), au format de l'inventaire.
+  async function equipementDe(classe) {
+    const e = await Stockage.lireReglage('equipementDepart');
+    return JSON.parse(JSON.stringify(Array.isArray(e?.[classe]) ? e[classe] : []));
+  }
+
+  // Nouveau personnage : caractéristiques et équipement de départ copiés depuis les Réglages.
+  function creer(nom, classe, caracs, inventaire = []) {
     const v = champ => Regles.valeur(caracs, 'heros', classe, champ);
     return {
       id: nouvelId(), nom, classe,
       vieMax: v('corps'), espritMax: v('esprit'), attaque: v('attaque'), defense: v('defense'),
-      or: 0, inventaire: [], journal: [], mort: false,
+      or: 0, inventaire, journal: [], mort: false,
       creeLe: new Date().toISOString(),
     };
   }
@@ -98,7 +104,8 @@ const Heros = (() => {
       e.preventDefault();
       const nom = $('#perso-nom').value.trim();
       if (!nom) return;
-      const p = creer(nom, $('#perso-classe').value, await lireCaracs());
+      const classe = $('#perso-classe').value;
+      const p = creer(nom, classe, await lireCaracs(), await equipementDe(classe));
       await Stockage.enregistrerPersonnage(p);
       afficherFiche(p.id);
     });
@@ -135,6 +142,8 @@ const Heros = (() => {
       <section class="carte">
         <h2>Inventaire</h2>
         <div id="pf-inventaire">${Inventaire.html(p.inventaire || [])}</div>
+        <button id="pf-equipement" class="petit-bouton">Ajouter l’équipement de départ (${echapper(nomClasse(p.classe))})</button>
+        <p id="pf-equipement-etat" class="discret petit"></p>
       </section>
       <section class="carte">
         <h2>Journal des quêtes</h2>
@@ -159,6 +168,15 @@ const Heros = (() => {
       if (inp.dataset.cle === 'or' && p.or === null) p.or = 0;
       await sauver();
     }));
+    $('#pf-equipement').addEventListener('click', async () => {
+      const ajout = await equipementDe(p.classe);
+      if (!ajout.length) { $('#pf-equipement-etat').textContent = 'Aucun équipement de départ pour cette classe (Réglages › Équipement de départ).'; return; }
+      const dejaArme = (p.inventaire || []).some(o => o.emplacement === 'arme');
+      // Une seule arme en main : si le personnage en a déjà une, l'arme de départ va avec les autres objets.
+      if (dejaArme) ajout.forEach(o => { if (o.emplacement === 'arme') delete o.emplacement; });
+      p.inventaire = [...(p.inventaire || []), ...ajout];
+      await sauver(); afficherFiche(id);
+    });
     Inventaire.brancher($('#pf-inventaire'), async fn => {
       p.inventaire = p.inventaire || [];
       fn(p.inventaire);

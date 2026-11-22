@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.21.0';
+const VERSION_APP = '0.22.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -188,7 +188,13 @@ async function afficherPartie(id) {
     const demarrer = async quete => {
       partie.quete = JSON.parse(JSON.stringify(quete));
       partie.reglages = { porteeCouloir: Plateau.PORTEE_DEFAUT, ...(partie.reglages || {}) };
-      partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages), await Heros.groupeDe(partie));
+      const groupe = await Heros.groupeDe(partie);
+      partie.etat = Plateau.etatInitial(partie.quete, Plateau.porteeDe(partie.reglages), groupe);
+      // Héros de base (sans personnages du registre) : ils reçoivent l'équipement de départ des Réglages.
+      if (!groupe.length) {
+        const equipement = await lireEquipementDepart();
+        for (const h of partie.etat.heros) h.inventaire = JSON.parse(JSON.stringify(equipement[h.classe] || []));
+      }
       await enregistrerPartie();
       afficherPartie(id);
     };
@@ -400,6 +406,7 @@ async function exporter() {
     caracteristiques: await Stockage.lireReglage('caracteristiques') || null,
     personnages: await Stockage.listerPersonnages(),
     cartesTresor: await Stockage.lireReglage('cartesTresor') || [],
+    equipementDepart: await Stockage.lireReglage('equipementDepart') || null,
   };
   const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -443,6 +450,7 @@ async function importerFichier(fichier) {
   const message = `Ce fichier contient ${donnees.parties.length} partie(s), sauvegardée(s) le ${dateLisible(donnees.exporteeLe)}.`
     + (remplacees.length ? `\n${remplacees.length} existe(nt) déjà sur cet iPad et sera(ont) remplacée(s) :\n– ${remplacees.map(p => p.nom).join('\n– ')}` : '')
     + (donnees.caracteristiques ? '\nLes caractéristiques (héros et monstres) du fichier remplaceront celles de cet iPad.' : '')
+    + (donnees.equipementDepart ? '\nL’équipement de départ des héros du fichier remplacera celui de cet iPad.' : '')
     + (Array.isArray(donnees.personnages) && donnees.personnages.length ? `\n${donnees.personnages.length} personnage(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
     + '\n\nContinuer ?';
   if (!confirm(message)) return dire('Restauration annulée.');
@@ -454,6 +462,7 @@ async function importerFichier(fichier) {
     if (p && typeof p.id === 'string' && typeof p.nom === 'string') await Stockage.enregistrerPersonnage(p);
   }
   if (Array.isArray(donnees.cartesTresor) && donnees.cartesTresor.length) await Stockage.ecrireReglage('cartesTresor', donnees.cartesTresor);
+  if (donnees.equipementDepart && typeof donnees.equipementDepart === 'object') await Stockage.ecrireReglage('equipementDepart', donnees.equipementDepart);
   if (donnees.caracteristiques && typeof donnees.caracteristiques === 'object') {
     await Stockage.ecrireReglage('caracteristiques', donnees.caracteristiques);
   }
@@ -481,8 +490,10 @@ async function afficherAPropos() {
 
   const caracs = await lireCaracs();
   const cartes = await Stockage.lireReglage('cartesTresor') || [];
+  const equipement = await lireEquipementDepart();
   vue.innerHTML = `
     ${formulaireCaracs(caracs)}
+    ${formulaireEquipement(equipement)}
     ${formulaireCartes(cartes)}
     <section class="carte">
       <h2>Compagnon de quête ${VERSION_APP}</h2>
@@ -512,6 +523,7 @@ async function afficherAPropos() {
     </section>`;
 
   brancherCaracs(caracs);
+  brancherEquipement(equipement);
   brancherCartes(cartes);
 
   $('#btn-maj').addEventListener('click', async () => {
@@ -588,6 +600,61 @@ function brancherCaracs(caracs) {
     etat.textContent = reste ? `Enregistré. ${reste} valeur(s) à remplir.` : 'Enregistré. Toutes les valeurs sont remplies.';
     etat.className = 'petit ' + (reste ? 'erreur' : 'succes');
   }));
+}
+
+/* ---------- Équipement de départ des héros (saisi d'après vos cartes) ----------
+   Par classe, un inventaire au format d'inventaire.js (arme active, armure, autres objets).
+   Copié dans l'inventaire de chaque nouveau personnage de la classe (onglet Héros) ;
+   un bouton de la fiche d'un personnage permet aussi de le lui ajouter. */
+
+async function lireEquipementDepart() {
+  const e = await Stockage.lireReglage('equipementDepart');
+  const res = {};
+  for (const t of Regles.TYPES_HEROS) res[t.id] = Array.isArray(e?.[t.id]) ? e[t.id] : [];
+  return res;
+}
+
+function blocEquipement(equipement, classe) {
+  return Inventaire.html(equipement[classe]);
+}
+
+function formulaireEquipement(equipement) {
+  return `
+    <section class="carte">
+      <h2>Équipement de départ</h2>
+      <p>Pour chaque héros : son arme en main, ses pièces d’armure et ses autres objets au début de l’aventure,
+         d’après vos cartes. Ils sont donnés à chaque nouveau personnage de la classe (onglet Héros) ;
+         la fiche d’un personnage existant a un bouton pour les lui ajouter.</p>
+      <p id="etat-equipement" class="discret petit">Enregistrement automatique.</p>
+      ${Regles.TYPES_HEROS.map(t => `
+        <details class="equipement-classe">
+          <summary><span class="pastille h-${t.id}"></span> ${echapper(t.nom)}
+            <span class="discret petit">${resumeEquipement(equipement[t.id])}</span></summary>
+          <div data-equipement="${t.id}">${blocEquipement(equipement, t.id)}</div>
+        </details>`).join('')}
+    </section>`;
+}
+
+function resumeEquipement(inv) {
+  const { arme, armures, autres } = Inventaire.tri(inv);
+  const n = (arme ? 1 : 0) + armures.length + autres.length;
+  return n ? `· ${n} élément${n > 1 ? 's' : ''}` : '· rien';
+}
+
+function brancherEquipement(equipement) {
+  vue.querySelectorAll('[data-equipement]').forEach(zone => {
+    const classe = zone.dataset.equipement;
+    const nom = Regles.TYPES_HEROS.find(t => t.id === classe)?.nom || classe;
+    const brancher = () => Inventaire.brancher(zone, async fn => {
+      fn(equipement[classe]);
+      await Stockage.ecrireReglage('equipementDepart', equipement);
+      zone.innerHTML = blocEquipement(equipement, classe);
+      zone.closest('details').querySelector('summary .petit').textContent = resumeEquipement(equipement[classe]);
+      $('#etat-equipement').textContent = `Enregistré (${nom}).`;
+      brancher();
+    }, nom);
+    brancher();
+  });
 }
 
 /* ---------- Cartes trésor (pioche virtuelle, saisie d'après vos cartes) ---------- */
