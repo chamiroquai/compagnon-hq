@@ -148,6 +148,7 @@ const VuePlateau = (() => {
               <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : bouton « Fiche » en haut pour le héros actif, ou touchez sa pastille dans l’ordre de jeu, ou le pion d’un autre héros.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche. Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
+              <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
               <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
@@ -1226,7 +1227,7 @@ const VuePlateau = (() => {
       const portee = Plateau.porteeDe(partie.reglages);
       const trouves = genre === 'portes' ? Plateau.fouillerPortes(g, etat, h, portee) : Plateau.fouillerPieges(g, etat, h, portee);
       // Meubles piégés repérés par la fouille de pièges.
-      const zone = Plateau.casesFouillables(g, etat, h, portee);
+      const { zone, auDela } = genre === 'portes' ? { zone: null, auDela: 0 } : Plateau.casesFouillablesPieges(g, etat, h, portee);
       const meubles = genre === 'portes' ? [] : (quete.mobilier || []).filter(m => {
         const st = etat.piegesMobilier[m.id];
         return m.piege && st && !st.trouve && !st.declenche && !st.desamorce && casesMeuble(m).some(c => zone.has(c));
@@ -1244,7 +1245,8 @@ const VuePlateau = (() => {
         ? (n ? `${n} porte${n > 1 ? 's' : ''} secrète${n > 1 ? 's' : ''} découverte${n > 1 ? 's' : ''} !` : 'Aucune porte secrète ici.')
         : (n ? `${n} piège${n > 1 ? 's' : ''} repéré${n > 1 ? 's' : ''} : ${trouves.map(id => id.startsWith('meuble:')
             ? `${quete.mobilier.find(m => 'meuble:' + m.id === id).nom} piégé`
-            : NOMS_PIEGES[etat.pieges.find(z => z.id === id).type]).join(', ')}.` : 'Aucun piège ici.');
+            : NOMS_PIEGES[etat.pieges.find(z => z.id === id).type]).join(', ')}.` : 'Aucun piège ici.')
+          + (auDela ? ` (La fouille couvre aussi l’autre côté de la porte ouverte.)` : '');
       evenement = {
         genre: 'fin', titre: genre === 'portes' ? 'Fouille : portes secrètes' : 'Fouille : pièges',
         texte, avertissement: avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '',

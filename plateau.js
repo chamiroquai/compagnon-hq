@@ -339,9 +339,33 @@ const Plateau = (() => {
       && [p.a, p.b].some(([x, y]) => zone.has(idx(g.L, x, y)))).map(p => p.id);
   }
 
-  // Pièges repérés par la fouille (pas encore connus, dans la zone fouillée).
-  function fouillerPieges(g, etat, h, portee) {
+  /* Zone de la fouille de pièges. Dérogation (règle maison du 22/11/2026) : un héros posé sur
+     la case devant une porte ouverte fouille aussi l'autre côté — la pièce entière vue depuis
+     le couloir, ou le couloir (dans sa ligne de vue, depuis la case de l'autre côté) vu depuis
+     la pièce. Seules les cases déjà dévoilées comptent (principe de visibilité).
+     Renvoie { zone, auDela } : auDela = nombre de portes ainsi utilisées. */
+  function casesFouillablesPieges(g, etat, h, portee = Infinity) {
     const zone = casesFouillables(g, etat, h, portee);
+    const ici = idx(g.L, h.x, h.y), revele = new Set(etat.revele || []);
+    let auDela = 0;
+    for (const p of g.quete.portes || []) {
+      const ia = idx(g.L, ...p.a), ib = idx(g.L, ...p.b);
+      if (ici !== ia && ici !== ib) continue;
+      if (!ouvert(g, etat, ia, ib)) continue;
+      const autre = ici === ia ? ib : ia;
+      if (g.zones[autre] === g.zones[ici]) continue;
+      const ax = autre % g.L, ay = Math.floor(autre / g.L);
+      const cote = estPiece(g.zones[autre]) ? g.pieces[g.zones[autre]] : casesFouillables(g, etat, { x: ax, y: ay }, portee);
+      let ajout = 0;
+      for (const c of cote) if (revele.has(c) && !zone.has(c)) { zone.add(c); ajout++; }
+      if (ajout || revele.has(autre)) auDela++;
+    }
+    return { zone, auDela };
+  }
+
+  // Pièges repérés par la fouille (pas encore connus, dans la zone fouillée, dérogation des portes comprise).
+  function fouillerPieges(g, etat, h, portee) {
+    const { zone } = casesFouillablesPieges(g, etat, h, portee);
     return (etat.pieges || []).filter(p => !p.trouve && !p.declenche && zone.has(idx(g.L, p.x, p.y))).map(p => p.id);
   }
 
@@ -480,5 +504,5 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, fouillerPortes, fouillerPieges, HEROS };
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges, HEROS };
 })();
