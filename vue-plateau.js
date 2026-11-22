@@ -169,7 +169,7 @@ const VuePlateau = (() => {
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche. Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
               <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on ne peut chercher le trésor que depuis une case voisine d’un coffre (le bouton reste grisé sinon).</li>
               <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
-              <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Un passage secret (⇄) connu s’emprunte en un pas : héros sur une extrémité, touchez l’autre extrémité éclairée.</li>
+              <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Un passage secret (⇄) connu s’emprunte en un pas : quand le héros actif est dessus, l’application propose de l’emprunter (après « Pas maintenant », touchez le héros pour que la proposition revienne).</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
               <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
@@ -621,6 +621,8 @@ const VuePlateau = (() => {
         // Contre une porte fermée écartée par « Pas maintenant » : le toucher fait revenir l'invite.
         const cle = porteRefuseeIci(actifTouche);
         if (cle) { refusees.delete(cle); return dessiner(); }
+        const clePassage = `passage@${actifTouche.x},${actifTouche.y}`;
+        if (refusees.has(clePassage) && Plateau.sortiesPassage(g, etat, actifTouche.x, actifTouche.y).length) { refusees.delete(clePassage); return dessiner(); }
         return basculerDeplacement();
       }
       // Pendant un déplacement, toucher une case fait avancer le héros actif.
@@ -797,6 +799,8 @@ const VuePlateau = (() => {
         const t = Plateau.interrupteurPret(g, e, x, y);
         if (t) actionne = { t, ...Plateau.actionnerInterrupteur(g, e, t.id) };
       });
+      // « Pas maintenant » sur un passage ne vaut que tant que le héros reste sur la case.
+      for (const k of [...refusees]) if (k.startsWith('passage@') && k !== `passage@${x},${y}`) refusees.delete(k);
       // Piège caché : il se déclenche sous les pieds du héros.
       if (piege) return declencherPiege(piege.id, depuis, [x - depuis[0], y - depuis[1]]);
       if (actionne) {
@@ -912,10 +916,43 @@ const VuePlateau = (() => {
       });
     }
 
+    /* Invite « emprunter le passage ? » (v0.27.1) : le héros actif est sur l'extrémité d'un
+       passage secret connu. La case d'arrivée est souvent dans le brouillard : on ne peut pas
+       compter sur la case éclairée. Après le passage, pas de nouvelle invite pour revenir
+       tant que le héros reste sur la case d'arrivée. */
+    function passageProposee() {
+      const h = herosActif();
+      if (!h || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || sortCible || combat || conclusion || evenement || secours() || heritage) return null;
+      if (refusees.has(`passage@${h.x},${h.y}`)) return null;
+      const sortie = Plateau.sortiesPassage(g, etat, h.x, h.y)[0];
+      return sortie ? { sortie } : null;
+    }
+
+    function dessinerInvitePassage(boite, { sortie }) {
+      const h = herosActif();
+      boite.innerHTML = `<span>Passage secret sous ${echapperTexte(h.nom)}. L’emprunter ?</span>
+        <button id="inv-passage" class="principal">Emprunter</button>
+        <button id="inv-non">Pas maintenant</button>`;
+      boite.hidden = false;
+      boite.querySelector('#inv-passage').addEventListener('click', () => {
+        const raison = Plateau.raisonBlocage(g, etat, h.x, h.y, ...sortie);
+        if (raison) return msg(raison);
+        if (!etat.tour.deplacement) basculerDeplacement();
+        refusees.add(`passage@${sortie[0]},${sortie[1]}`);
+        avancer({ x: sortie[0], y: sortie[1] });
+      });
+      boite.querySelector('#inv-non').addEventListener('click', () => {
+        refusees.add(`passage@${h.x},${h.y}`);
+        dessiner();
+      });
+    }
+
     function dessinerInvite() {
       const boite = conteneur.querySelector('#pl-invite');
       const p = porteProposee();
       if (!p) {
+        const pa = passageProposee();
+        if (pa) return dessinerInvitePassage(boite, pa);
         if (escalierPropose()) return dessinerInviteEscalier(boite);
         boite.hidden = true; return;
       }
