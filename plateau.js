@@ -484,6 +484,7 @@ const Plateau = (() => {
       idUnique(m, 'mobilier');
       for (let dx = 0; dx < (m.l || 1); dx++) for (let dy = 0; dy < (m.h || 1); dy++) {
         if (!libre(m.x + dx, m.y + dy)) { err.push(`mobilier ${m.id} : déborde du plateau ou sur la roche`); dx = 99; break; }
+        if (z(m.x + dx, m.y + dy) !== z(m.x, m.y)) { err.push(`mobilier ${m.id} : à cheval sur deux zones (mur au milieu)`); dx = 99; break; }
       }
     }
     for (const m of q.monstres || []) {
