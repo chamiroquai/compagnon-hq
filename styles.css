@@ -493,3 +493,16 @@ svg.theme-pierre .murs-ombre line { stroke: #000; stroke-opacity: 0.55; stroke-w
 svg.theme-pierre .murs line { stroke: #f3efe4; stroke-width: 3; stroke-linecap: square; }
 svg.theme-pierre .contour { stroke: #14110d; stroke-width: 10; }
 svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }
+
+/* Passages secrets (⇄) et interrupteurs (◉) — v0.27.0 */
+.passage, .interrupteur { pointer-events: none; }
+.passage rect { fill: rgba(120, 200, 255, 0.16); stroke: #78c8ff; stroke-width: 2; stroke-dasharray: 5 3; }
+.passage text { fill: #a8dcff; font-size: 20px; font-weight: 700; text-anchor: middle; }
+.passage.cache rect { fill: rgba(255, 90, 74, 0.10); stroke: #ff5a4a; }
+.passage.cache text { fill: #ff8a7a; }
+.interrupteur circle { fill: rgba(255, 196, 64, 0.14); stroke: #ffc440; stroke-width: 2; }
+.interrupteur text { fill: #ffd76a; font-size: 20px; text-anchor: middle; }
+.interrupteur.actif circle { fill: rgba(140, 220, 120, 0.16); stroke: #8cdc78; }
+.interrupteur.actif text { fill: #a8e896; }
+.interrupteur.cache circle { fill: rgba(255, 90, 74, 0.10); stroke: #ff5a4a; }
+.interrupteur.cache text { fill: #ff8a7a; }

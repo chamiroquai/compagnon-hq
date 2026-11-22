@@ -169,6 +169,7 @@ const VuePlateau = (() => {
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche. Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
               <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on ne peut chercher le trésor que depuis une case voisine d’un coffre (le bouton reste grisé sinon).</li>
               <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
+              <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Un passage secret (⇄) connu s’emprunte en un pas : héros sur une extrémité, touchez l’autre extrémité éclairée.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
               <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
@@ -353,6 +354,24 @@ const VuePlateau = (() => {
         }
       }
 
+      // 3 ter. Passages secrets (⇄) connus ; interrupteurs (◉) repérés. En vue MJ, aussi ceux encore cachés.
+      for (const p of quete.passages || []) {
+        const connu = Plateau.passageConnu(etat, p.id);
+        for (const [x, y] of [p.a, p.b]) {
+          if (!(vueMJ || (connu && vu.has(Plateau.idx(L, x, y))))) continue;
+          const gp = el('g', { class: 'passage' + (connu ? '' : ' cache') }, svg);
+          el('rect', { x: x * T + 3, y: y * T + 3, width: T - 6, height: T - 6, rx: 8 }, gp);
+          el('text', { x: x * T + T / 2, y: y * T + T / 2 + 7 }, gp).textContent = '⇄';
+        }
+      }
+      for (const t of quete.interrupteurs || []) {
+        const st = etat.interrupteurs?.[t.id];
+        if (!(vueMJ || (st?.trouve && vu.has(Plateau.idx(L, t.x, t.y))))) continue;
+        const gi = el('g', { class: 'interrupteur' + (st?.trouve ? '' : ' cache') + (st?.active ? ' actif' : '') }, svg);
+        el('circle', { cx: t.x * T + T / 2, cy: t.y * T + T / 2, r: T / 2 - 6 }, gi);
+        el('text', { x: t.x * T + T / 2, y: t.y * T + T / 2 + 7 }, gi).textContent = '◉';
+      }
+
       // 4. Murs (traits épais sur les bords entre zones différentes) ; thème pierre : trait clair sur une ombre.
       const ombres = theme ? el('g', { class: 'murs-ombre' }, svg) : null;
       const murs = el('g', { class: 'murs' }, svg);
@@ -435,6 +454,10 @@ const VuePlateau = (() => {
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nx = actif.x + dx, ny = actif.y + dy;
           if (raisonDeplacementSort(actif, nx, ny, effets)) continue;
+          el('rect', { x: nx * T + 3, y: ny * T + 3, width: T - 6, height: T - 6, rx: 6 }, cibles);
+        }
+        for (const [nx, ny] of Plateau.sortiesPassage(g, etat, actif.x, actif.y)) {
+          if (Plateau.raisonBlocage(g, etat, actif.x, actif.y, nx, ny)) continue;
           el('rect', { x: nx * T + 3, y: ny * T + 3, width: T - 6, height: T - 6, rx: 6 }, cibles);
         }
       }
@@ -764,20 +787,34 @@ const VuePlateau = (() => {
       const surHeros = Plateau.autreHerosEn(etat, actif.id, x, y);
       const surMonstre = etat.monstres.some(m => m.x === x && m.y === y);
       const depuis = [actif.x, actif.y];
+      const parPassage = !!Plateau.passageEntre(g, etat, actif.x, actif.y, x, y);
+      let actionne = null;
       modifier(e => {
         const h = e.heros.find(k => k.id === actif.id);
         h.x = x; h.y = y;
         compterPas(e, x, y);
+        // Interrupteur repéré sous les pieds du héros : il s'actionne.
+        const t = Plateau.interrupteurPret(g, e, x, y);
+        if (t) actionne = { t, ...Plateau.actionnerInterrupteur(g, e, t.id) };
       });
       // Piège caché : il se déclenche sous les pieds du héros.
       if (piege) return declencherPiege(piege.id, depuis, [x - depuis[0], y - depuis[1]]);
+      if (actionne) {
+        const np = actionne.passages.length, nd = actionne.portes.length;
+        const effets = [np ? (np > 1 ? `${np} passages secrets s’ouvrent.` : 'Un passage secret s’ouvre.') : '',
+          nd ? (nd > 1 ? `${nd} portes secrètes apparaissent.` : 'Une porte secrète apparaît.') : ''].filter(Boolean).join(' ');
+        evenement = { genre: 'fin', titre: 'Interrupteur', ambiance: '',
+          texte: [actionne.t.texte || `Sous le pied de ${actif.nom}, la dalle s’enfonce avec un déclic.`, effets || 'Rien ne semble se passer… pour l’instant.'].join(' ') };
+        return dessiner();
+      }
+      if (parPassage) return msg(`${actif.nom} emprunte le passage secret.`);
       msg(surHeros ? `${actif.nom} passe la case de ${surHeros.nom} (on ne peut pas s’y arrêter).`
         : surMonstre ? 'Voile de brume : on traverse la case d’un monstre, mais on ne peut pas s’y arrêter.' : '');
     }
 
     // Raison de refuser un pas, en tenant compte des sorts de déplacement en cours.
     function raisonDeplacementSort(h, x, y, effets) {
-      if (!effets.brume && !effets.traverse) return Plateau.raisonBlocage(g, etat, h.x, h.y, x, y);
+      if ((!effets.brume && !effets.traverse) || Plateau.passageEntre(g, etat, h.x, h.y, x, y)) return Plateau.raisonBlocage(g, etat, h.x, h.y, x, y);
       if (x < 0 || y < 0 || x >= L || y >= H) return 'Hors du plateau.';
       if (Math.abs(x - h.x) + Math.abs(y - h.y) !== 1) return 'Une case à la fois, sans diagonale : touchez une case voisine du héros.';
       if (g.zones[Plateau.idx(L, x, y)] === '#') return 'Roche : impossible de passer.';
@@ -1314,6 +1351,8 @@ const VuePlateau = (() => {
       if (monstreVisible()) avert.push('Un monstre est visible : la règle interdit de fouiller.');
       const portee = Plateau.porteeDe(partie.reglages);
       const trouves = genre === 'portes' ? Plateau.fouillerPortes(g, etat, h, portee) : Plateau.fouillerPieges(g, etat, h, portee);
+      const passages = genre === 'portes' ? Plateau.fouillerPassages(g, etat, h, portee) : [];
+      const interrupteurs = genre === 'portes' ? [] : Plateau.fouillerInterrupteurs(g, etat, h, portee);
       // Meubles piégés repérés par la fouille de pièges.
       const { zone, auDela } = genre === 'portes' ? { zone: null, auDela: 0 } : Plateau.casesFouillablesPieges(g, etat, h, portee);
       const meubles = genre === 'portes' ? [] : (quete.mobilier || []).filter(m => {
@@ -1325,20 +1364,25 @@ const VuePlateau = (() => {
         e.tour.actions = (e.tour.actions || 0) + 1;
         if (genre === 'portes') e.secretesTrouvees.push(...trouves);
         else for (const id of trouves) e.pieges.find(z => z.id === id).trouve = true;
+        if (passages.length) e.passagesTrouves = [...(e.passagesTrouves || []), ...passages];
+        e.interrupteurs = e.interrupteurs || {};
+        for (const id of interrupteurs) e.interrupteurs[id] = { ...e.interrupteurs[id], trouve: true };
         for (const m of meubles) e.piegesMobilier[m.id].trouve = true;
       });
       trouves.push(...meubles.map(m => 'meuble:' + m.id));
-      const n = trouves.length;
+      const n = trouves.length, np = passages.length, ni = interrupteurs.length;
       const texte = genre === 'portes'
-        ? (n ? `${n} porte${n > 1 ? 's' : ''} secrète${n > 1 ? 's' : ''} découverte${n > 1 ? 's' : ''} !` : 'Aucune porte secrète ici.')
-        : (n ? `${n} piège${n > 1 ? 's' : ''} repéré${n > 1 ? 's' : ''} : ${trouves.map(id => id.startsWith('meuble:')
+        ? ([n ? `${n} porte${n > 1 ? 's' : ''} secrète${n > 1 ? 's' : ''} découverte${n > 1 ? 's' : ''} !` : '',
+            np ? `${np > 1 ? np + ' passages secrets découverts' : 'Un passage secret découvert'} !` : ''].filter(Boolean).join(' ') || 'Aucune porte secrète ici.')
+        : ([n ? `${n} piège${n > 1 ? 's' : ''} repéré${n > 1 ? 's' : ''} : ${trouves.map(id => id.startsWith('meuble:')
             ? `${quete.mobilier.find(m => 'meuble:' + m.id === id).nom} piégé`
-            : NOMS_PIEGES[etat.pieges.find(z => z.id === id).type]).join(', ')}.` : 'Aucun piège ici.')
+            : NOMS_PIEGES[etat.pieges.find(z => z.id === id).type]).join(', ')}.` : '',
+            ni ? `${ni > 1 ? ni + ' interrupteurs repérés' : 'Un interrupteur repéré'} (◉) : marcher dessus l’actionne.` : ''].filter(Boolean).join(' ') || 'Aucun piège ici.')
           + (auDela ? ` (La fouille couvre aussi l’autre côté de la porte ouverte.)` : '');
       evenement = {
         genre: 'fin', titre: genre === 'portes' ? 'Fouille : portes secrètes' : 'Fouille : pièges',
         texte, avertissement: avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '',
-        ambiance: Ambiance.tirer(n ? (genre === 'portes' ? 'fouillePorte' : 'fouillePiege') : 'fouilleRien', { heros: h.nom }),
+        ambiance: Ambiance.tirer(n + np + ni ? (genre === 'portes' ? 'fouillePorte' : 'fouillePiege') : 'fouilleRien', { heros: h.nom }),
       };
       dessiner();
     }

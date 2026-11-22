@@ -211,6 +211,12 @@ const Plateau = (() => {
   // ou un meuble ; on peut traverser un autre héros (mais pas s'arrêter sur sa case).
   function raisonBlocage(g, etat, x, y, nx, ny) {
     if (!dansPlateau(g, nx, ny)) return 'Hors du plateau.';
+    // Passage secret connu : on l'emprunte en un pas, d'une extrémité à l'autre.
+    if (passageEntre(g, etat, x, y, nx, ny)) {
+      if (etat.monstres.some(m => m.x === nx && m.y === ny)) return 'Un monstre bloque la sortie du passage.';
+      const meubleSortie = meubleEn(g, nx, ny);
+      return meubleSortie ? `${meubleSortie.nom} bloque la sortie du passage.` : null;
+    }
     if (Math.abs(nx - x) + Math.abs(ny - y) !== 1) return 'Une case à la fois, sans diagonale : touchez une case voisine du héros.';
     const i = idx(g.L, x, y), j = idx(g.L, nx, ny);
     if (g.zones[j] === '#') return 'Roche : impossible de passer.';
@@ -334,8 +340,8 @@ const Plateau = (() => {
 
   // Portes secrètes trouvées par la fouille (une des deux cases dans la zone fouillée).
   function fouillerPortes(g, etat, h, portee) {
-    const zone = casesFouillables(g, etat, h, portee);
-    return (g.quete.portes || []).filter(p => p.secrete && !etat.secretesTrouvees.includes(p.id)
+    const zone = casesFouillables(g, etat, h, portee), cmd = commandes(g);
+    return (g.quete.portes || []).filter(p => p.secrete && !cmd.has(p.id) && !etat.secretesTrouvees.includes(p.id)
       && [p.a, p.b].some(([x, y]) => zone.has(idx(g.L, x, y)))).map(p => p.id);
   }
 
@@ -367,6 +373,68 @@ const Plateau = (() => {
   function fouillerPieges(g, etat, h, portee) {
     const { zone } = casesFouillablesPieges(g, etat, h, portee);
     return (etat.pieges || []).filter(p => !p.trouve && !p.declenche && zone.has(idx(g.L, p.x, p.y))).map(p => p.id);
+  }
+
+  /* ---------- Passages secrets et interrupteurs (v0.27.0) ----------
+     Passage : relie deux cases éloignées (« a » et « b ») ; une fois connu, un héros posé
+     sur une extrémité passe à l'autre en un pas. Interrupteur : caché ; une fouille de pièges
+     le repère ; un héros qui marche dessus ensuite l'actionne, ce qui révèle les passages et
+     portes secrètes qu'il commande (champ « active »). Un passage ou une porte secrète commandé
+     par un interrupteur ne se trouve pas par la fouille ; un passage libre se trouve par la
+     fouille des portes secrètes, comme une porte. */
+
+  // Identifiants (passages et portes) commandés par un interrupteur de la quête.
+  function commandes(g) {
+    return new Set((g.quete.interrupteurs || []).flatMap(t => t.active || []));
+  }
+  function passageConnu(etat, id) { return (etat.passagesTrouves || []).includes(id); }
+  // Passage connu reliant (x, y) à (nx, ny), ou undefined.
+  function passageEntre(g, etat, x, y, nx, ny) {
+    return (g.quete.passages || []).find(p => passageConnu(etat, p.id)
+      && ((p.a[0] === x && p.a[1] === y && p.b[0] === nx && p.b[1] === ny) || (p.b[0] === x && p.b[1] === y && p.a[0] === nx && p.a[1] === ny)));
+  }
+  // Autres extrémités des passages connus dont une extrémité est en (x, y).
+  function sortiesPassage(g, etat, x, y) {
+    const res = [];
+    for (const p of g.quete.passages || []) {
+      if (!passageConnu(etat, p.id)) continue;
+      if (p.a[0] === x && p.a[1] === y) res.push(p.b);
+      else if (p.b[0] === x && p.b[1] === y) res.push(p.a);
+    }
+    return res;
+  }
+  // Passages libres (non commandés) trouvés par une fouille des portes secrètes.
+  function fouillerPassages(g, etat, h, portee) {
+    const zone = casesFouillables(g, etat, h, portee), cmd = commandes(g);
+    return (g.quete.passages || []).filter(p => !cmd.has(p.id) && !passageConnu(etat, p.id)
+      && [p.a, p.b].some(([x, y]) => zone.has(idx(g.L, x, y)))).map(p => p.id);
+  }
+  // Interrupteurs repérés par une fouille de pièges (même zone que les pièges).
+  function fouillerInterrupteurs(g, etat, h, portee) {
+    const { zone } = casesFouillablesPieges(g, etat, h, portee);
+    return (g.quete.interrupteurs || []).filter(t => !etat.interrupteurs?.[t.id]?.trouve
+      && zone.has(idx(g.L, t.x, t.y))).map(t => t.id);
+  }
+  // Interrupteur repéré mais pas encore actionné, sur la case (x, y), ou undefined.
+  function interrupteurPret(g, etat, x, y) {
+    return (g.quete.interrupteurs || []).find(t => t.x === x && t.y === y
+      && etat.interrupteurs?.[t.id]?.trouve && !etat.interrupteurs[t.id].active);
+  }
+  // Actionne l'interrupteur (modifie l'état). Renvoie { passages, portes } : ce qui vient d'apparaître.
+  function actionnerInterrupteur(g, etat, id) {
+    const t = (g.quete.interrupteurs || []).find(k => k.id === id);
+    etat.interrupteurs = etat.interrupteurs || {};
+    etat.interrupteurs[id] = { ...etat.interrupteurs[id], trouve: true, active: true };
+    etat.passagesTrouves = etat.passagesTrouves || [];
+    const res = { passages: [], portes: [] };
+    for (const cible of t?.active || []) {
+      if ((g.quete.passages || []).some(p => p.id === cible)) {
+        if (!etat.passagesTrouves.includes(cible)) { etat.passagesTrouves.push(cible); res.passages.push(cible); }
+      } else if ((g.quete.portes || []).some(p => p.id === cible && p.secrete)) {
+        if (!etat.secretesTrouvees.includes(cible)) { etat.secretesTrouvees.push(cible); res.portes.push(cible); }
+      }
+    }
+    return res;
   }
 
   // Lettre de la pièce où se trouve la case, ou null (couloir, roche).
@@ -444,13 +512,18 @@ const Plateau = (() => {
       fouillesTresor: {},   // héros → pièces qu'il a déjà fouillées pour un trésor
       portesOuvertes: [],
       secretesTrouvees: [],
+      passagesTrouves: [],  // passages secrets connus
+      interrupteurs: {},    // id → { trouve, active }
       revele: [],
       penombre: {},
     };
-    // L'escalier est toujours visible.
+    // L'escalier est visible dès le départ si les héros partent de lui ; sinon (sortie ailleurs),
+    // il reste dans le brouillard jusqu'à ce qu'on le voie.
     if (quete.escalier) {
       const L = quete.plateau.largeur, { x, y } = quete.escalier;
-      etat.revele.push(idx(L, x, y), idx(L, x + 1, y), idx(L, x, y + 1), idx(L, x + 1, y + 1));
+      const cases = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
+      if ((quete.departs || []).some(([dx, dy]) => cases.some(([cx, cy]) => cx === dx && cy === dy)))
+        etat.revele.push(...cases.map(([cx, cy]) => idx(L, cx, cy)));
     }
     devoiler(geometrie(quete), etat, portee);
     return etat;
@@ -496,6 +569,21 @@ const Plateau = (() => {
       if (!['fosse', 'bloc', 'lance'].includes(p.type)) err.push(`piège ${p.id} : type inconnu « ${p.type} » (fosse, bloc ou lance)`);
       if (!libre(p.x, p.y)) err.push(`piège ${p.id} : case hors du plateau ou dans la roche`);
     }
+    const cibles = new Set();
+    for (const p of q.passages || []) {
+      idUnique(p, 'passage');
+      const [ax, ay] = p.a || [], [bx, by] = p.b || [];
+      if (!libre(ax, ay) || !libre(bx, by)) { err.push(`passage ${p.id} : case hors du plateau ou dans la roche`); continue; }
+      if (ax === bx && ay === by) err.push(`passage ${p.id} : les deux extrémités sont sur la même case`);
+      cibles.add(p.id);
+    }
+    for (const p of q.portes || []) if (p.secrete) cibles.add(p.id);
+    for (const t of q.interrupteurs || []) {
+      idUnique(t, 'interrupteur');
+      if (!libre(t.x, t.y)) err.push(`interrupteur ${t.id} : case hors du plateau ou dans la roche`);
+      if (t.active != null && !Array.isArray(t.active)) err.push(`interrupteur ${t.id} : « active » doit être une liste`);
+      for (const c of Array.isArray(t.active) ? t.active : []) if (!cibles.has(c)) err.push(`interrupteur ${t.id} : « ${c} » n’est ni un passage ni une porte secrète`);
+    }
     if (q.escalier) {
       const { x, y } = q.escalier;
       if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([dx, dy]) => libre(x + dx, y + dy))) err.push('escalier : ses 2 × 2 cases doivent être sur le plateau, hors de la roche');
@@ -505,5 +593,6 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges, HEROS };
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
+    passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
 })();
