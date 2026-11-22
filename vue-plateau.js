@@ -247,7 +247,7 @@ const VuePlateau = (() => {
       if (!historique.length) return;
       etat = JSON.parse(historique.pop());
       partie.etat = etat;
-      selection = null; combat = null; conclusion = null; ciblage = false; djinnPorteChoix = false; djinnMonstreChoix = false; fenetreActions = null; evenement = null; heritage = null; potionInconnue = null;
+      selection = null; combat = null; conclusion = null; ciblage = false; djinnPorteChoix = false; djinnMonstreChoix = false; sortCible = null; fenetreActions = null; evenement = null; heritage = null; potionInconnue = null;
       enregistrer();
       msg('Action annulée.');
       dessiner();
@@ -378,8 +378,10 @@ const VuePlateau = (() => {
       for (const m of etat.monstres) {
         if (!visible(Plateau.idx(L, m.x, m.y))) continue;
         // Cibles entourées : monstres attaquables (attaque normale) ou tout monstre en vue (Djinn).
-        const visableCible = (ciblage && ciblesAttaque().some(c => c.id === m.id)) || (djinnMonstreChoix && !vueMJ && vu.has(Plateau.idx(L, m.x, m.y)));
-        const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : ''), 'data-monstre': m.id }, svg);
+        const visableSort = sortCible && !vueMJ && ciblesSort(sortCible).monstres.some(c => c.id === m.id);
+        const visableCible = (ciblage && ciblesAttaque().some(c => c.id === m.id)) || (djinnMonstreChoix && !vueMJ && vu.has(Plateau.idx(L, m.x, m.y))) || visableSort;
+        const horsVueSort = visableSort && !Sorts.sort(sortCible).partout && !cibleVisible(herosActif(), m);
+        const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : '') + (horsVueSort ? ' hors-vue' : ''), 'data-monstre': m.id }, svg);
         el('rect', { x: m.x * T + 3, y: m.y * T + 3, width: T - 6, height: T - 6, rx: 5 }, gr);
         el('title', {}, gr).textContent = m.nom || infoMonstre(m.type).nom;
         if (!Icones.poser(gr, 'monstre', m.type, m.x * T + T / 2, m.y * T + T / 2, T - 9)) {
@@ -417,7 +419,10 @@ const VuePlateau = (() => {
       // 8. Héros
       for (const h of etat.heros) {
         if (h.x == null) continue;
-        const cls = 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '') + (h.corps === 0 ? ' a-terre' : '');
+        const cibleS = sortCible && !vueMJ && ciblesSort(sortCible).heros.some(k => k.id === h.id);
+        const horsVueS = cibleS && !Sorts.sort(sortCible).partout && h.id !== actif?.id && !cibleVisible(actif, h);
+        const cls = 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '') + (h.corps === 0 ? ' a-terre' : '')
+          + (cibleS ? ' cible-sort' : '') + (horsVueS ? ' hors-vue' : '');
         const gr = el('g', { class: cls, 'data-heros': h.id }, svg);
         // Héros actif : anneau blanc autour du pion, visible quelle que soit sa couleur.
         if (cls.includes(' actif')) el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 1, class: 'anneau' }, gr);
@@ -515,7 +520,7 @@ const VuePlateau = (() => {
     svg.addEventListener('click', evt => {
       const porte = evt.target.closest('[data-porte]');
       const heros = evt.target.closest('[data-heros]');
-      if (porte && !djinnPorteChoix && !djinnMonstreChoix) return toucherPorte(porte.dataset.porte);
+      if (porte && !djinnPorteChoix && !djinnMonstreChoix && !sortCible) return toucherPorte(porte.dataset.porte);
       const c = caseTouchee(evt);
 
       const monstreTouche = evt.target.closest('[data-monstre]');
@@ -538,6 +543,16 @@ const VuePlateau = (() => {
         return selection ? poserHeros(c) : toucherCaseMJ(c);
       }
 
+      // Sort ciblé : toucher le héros ou le monstre visé.
+      if (sortCible) {
+        const { heros: hs, monstres: ms } = ciblesSort(sortCible);
+        const hid = heros?.dataset.heros || (c && hs.find(k => k.x === c.x && k.y === c.y)?.id);
+        const mid = monstreTouche?.dataset.monstre || (c && ms.find(k => k.x === c.x && k.y === c.y)?.id);
+        const id = sortCible;
+        if (hid && hs.some(k => k.id === hid)) { sortCible = null; return lancerSort(id, { genre: 'heros', id: hid }); }
+        if (mid && ms.some(k => k.id === mid)) { sortCible = null; return lancerSort(id, { genre: 'monstre', id: mid }); }
+        return msg(`${Sorts.sort(id).nom} : touchez une cible entourée, ou « Retour ».`);
+      }
       // Sort du Djinn : toucher le monstre à attaquer (n'importe où, s'il est en vue).
       if (djinnMonstreChoix) {
         const mt = monstreTouche && etat.monstres.find(k => k.id === monstreTouche.dataset.monstre);
@@ -638,7 +653,7 @@ const VuePlateau = (() => {
 
       conteneur.querySelectorAll('[data-fiche]').forEach(b => b.addEventListener('click', () => ouvrirFiche(b.dataset.fiche)));
       const p = conteneur.querySelector('#pl-tour');
-      conteneur.querySelector('#pl-haut').classList.toggle('saisie', (ciblage || djinnMonstreChoix || djinnPorteChoix) && !vueMJ);
+      conteneur.querySelector('#pl-haut').classList.toggle('saisie', (ciblage || djinnMonstreChoix || djinnPorteChoix || sortCible) && !vueMJ);
       if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
       let html = `<span class="titre-tour">T${t.numero} · `;
       if (!actif) {
@@ -654,6 +669,10 @@ const VuePlateau = (() => {
         html += `<strong>${actif.nom}</strong></span>
           <span>Touchez le monstre à attaquer.</span>
           <button id="tr-retour-attaque">Retour</button>`;
+      } else if (sortCible) {
+        html += `<strong>${actif.nom}</strong></span>
+          <span>${Sorts.groupe(Sorts.sort(sortCible).groupe).symbole} ${Sorts.sort(sortCible).nom} : touchez la cible.</span>
+          <button id="tr-retour-sort">Retour</button>`;
       } else if (djinnPorteChoix || djinnMonstreChoix) {
         html += `<strong>${actif.nom}</strong></span>
           <span>🌪 Djinn : touchez ${djinnPorteChoix ? 'la porte à ouvrir' : 'le monstre à attaquer'}.</span>
@@ -667,11 +686,12 @@ const VuePlateau = (() => {
       }
       p.innerHTML = html;
       const sur = (sel, f) => p.querySelector(sel)?.addEventListener('click', f);
-      sur('#tr-actions', () => { fenetreActions = 'menu'; djinnPorteChoix = false; djinnMonstreChoix = false; dessiner(); });
+      sur('#tr-actions', () => { fenetreActions = 'menu'; djinnPorteChoix = false; djinnMonstreChoix = false; sortCible = null; dessiner(); });
       sur('#tr-fin-tour', finDuTour);
       sur('#tr-fiche', () => ouvrirFiche(herosActif().id));
       sur('#tr-fin-zargon', finTourZargon);
       sur('#tr-retour-attaque', () => { ciblage = false; msg(''); dessiner(); });
+      sur('#tr-retour-sort', () => { sortCible = null; fenetreActions = 'sorts'; msg(''); dessiner(); });
       sur('#tr-retour-djinn', () => { djinnPorteChoix = false; djinnMonstreChoix = false; evenement = { genre: 'djinn', sort: 'djinn' }; msg(''); dessiner(); });
     }
 
@@ -764,7 +784,7 @@ const VuePlateau = (() => {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
-      fenetreActions = null; ciblage = false; djinnPorteChoix = false; djinnMonstreChoix = false; combat = null; conclusion = null; evenement = null;
+      fenetreActions = null; ciblage = false; djinnPorteChoix = false; djinnMonstreChoix = false; sortCible = null; combat = null; conclusion = null; evenement = null;
       modifier(e => {
         const k = e.heros.find(z => z.id === actif.id);
         if (k) delete k.passeTour; // la Tempête ne dure qu'un tour
@@ -788,7 +808,7 @@ const VuePlateau = (() => {
 
     function porteProposee() {
       const h = herosActif();
-      if (!h || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || combat || conclusion || evenement || secours() || heritage) return null;
+      if (!h || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || sortCible || combat || conclusion || evenement || secours() || heritage) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
@@ -1002,6 +1022,7 @@ const VuePlateau = (() => {
     let ciblage = false;  // le joueur doit toucher un monstre
     let djinnPorteChoix = false; // sort du Djinn : le joueur doit toucher la porte à ouvrir
     let djinnMonstreChoix = false; // sort du Djinn : le joueur doit toucher le monstre à attaquer
+    let sortCible = null; // id du sort (autre que le Djinn) dont le joueur doit toucher la cible sur le plateau
     let combat = null;    // { monstre, ambiance } : duel ouvert, on attend les crânes du héros
     let conclusion = null; // résultat d'un duel, affiché jusqu'à « Suivant »
 
@@ -1681,7 +1702,11 @@ const VuePlateau = (() => {
     function choisirSort(id) {
       const s = Sorts.sort(id);
       fenetreActions = null;
-      evenement = { genre: s.id === 'djinn' ? 'djinn' : 'cibleSort', sort: id };
+      if (s.id === 'djinn') { evenement = { genre: 'djinn', sort: id }; return dessiner(); }
+      // Les autres sorts : la cible se touche sur le plateau (comme une attaque).
+      evenement = null; sortCible = id;
+      const qui = s.cible === 'heros' ? 'le héros visé (lanceur compris)' : s.cible === 'monstre' ? 'le monstre visé' : 'le héros ou le monstre visé';
+      msg(`${Sorts.groupe(s.groupe).symbole} ${s.nom} : ${s.resume}`, `Touchez ${qui}. Une cible hors de vue (pointillés) reçoit le sort avec un avertissement.`);
       dessiner();
     }
 
@@ -1824,6 +1849,16 @@ const VuePlateau = (() => {
         return `<button data-sort="${x.id}" ${x.utilise ? 'disabled' : ''}><strong>${Sorts.groupe(s.groupe).symbole} ${s.nom}${x.utilise ? ' (utilisé)' : ''}</strong>
           <span class="petit">${s.resume}</span></button>`;
       }).join('')}</div>`;
+    }
+
+    // Cibles possibles d'un sort sur le plateau : héros debout et/ou monstres en vue.
+    function ciblesSort(id) {
+      const s = Sorts.sort(id);
+      const vu = new Set(etat.revele);
+      return {
+        heros: s.cible === 'monstre' ? [] : etat.heros.filter(k => k.x != null && k.corps !== 0 && !k.mort),
+        monstres: s.cible === 'heros' ? [] : etat.monstres.filter(m => vu.has(Plateau.idx(L, m.x, m.y))),
+      };
     }
 
     function htmlCibles(ev) {

@@ -471,3 +471,7 @@ svg .icone { pointer-events: none; overflow: visible; }
 /* Sort du Djinn : portes fermées que l'on peut toucher */
 .porte.cible-djinn rect:first-child { stroke: #7fd0ff; stroke-width: 4; animation: clignote-djinn 1.2s ease-in-out infinite; }
 @keyframes clignote-djinn { 50% { stroke-opacity: 0.35; } }
+
+/* Sorts : cibles possibles entourées ; pointillés = hors de vue (sort lancé avec un avertissement) */
+.pion.heros.cible-sort circle:last-of-type { stroke: #7fd0ff; stroke-width: 4; }
+.pion.heros.cible-sort.hors-vue circle:last-of-type, .monstre.cible.hors-vue rect { stroke-dasharray: 5 4; }
