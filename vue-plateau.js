@@ -129,7 +129,7 @@ const VuePlateau = (() => {
               ${[4, 5, 6, 7, 8, 10, 12].map(n => `<option value="${n}">${n} cases</option>`).join('')}
             </select>
             <p class="discret petit">Règle maison : au-delà, le couloir reste dans le noir ; la dernière case vue
-              s’estompe en fondu. Les pièces sont toujours vues en entier. Réduire la portée ne recache pas
+              s’estompe en fondu (comme tout bord du brouillard). Les pièces sont toujours vues en entier. Réduire la portée ne recache pas
               ce qui a déjà été vu.</p>
           </section>
           <section>
@@ -424,9 +424,38 @@ const VuePlateau = (() => {
         if (!vu.has(i)) el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T + 0.5, height: T + 0.5 }, brouillard);
       }
 
+      const defs = el('defs', {}, svg);
+
+      // 9 bis. Bord du brouillard en fondu : une case visible qui donne librement (sans mur ni
+      //        porte fermée) sur une case encore dans le brouillard s'assombrit de ce côté,
+      //        sur une demi-case. Les cases de pénombre (10) ont déjà leur propre fondu.
+      const bordMax = vueMJ ? 0.5 : 0.92;
+      const COTES = [
+        { nom: 'haut', dx: 0, dy: -1, grad: { x1: 0, y1: 1, x2: 0, y2: 0 }, rect: (x, y) => ({ x, y, width: T + 0.5, height: T / 2 }) },
+        { nom: 'bas', dx: 0, dy: 1, grad: { x1: 0, y1: 0, x2: 0, y2: 1 }, rect: (x, y) => ({ x, y: y + T / 2, width: T + 0.5, height: T / 2 + 0.5 }) },
+        { nom: 'gauche', dx: -1, dy: 0, grad: { x1: 1, y1: 0, x2: 0, y2: 0 }, rect: (x, y) => ({ x, y, width: T / 2, height: T + 0.5 }) },
+        { nom: 'droite', dx: 1, dy: 0, grad: { x1: 0, y1: 0, x2: 1, y2: 0 }, rect: (x, y) => ({ x: x + T / 2, y, width: T / 2 + 0.5, height: T + 0.5 }) },
+      ];
+      for (const c of COTES) {
+        const grad = el('linearGradient', { id: 'bord-' + c.nom, ...c.grad }, defs);
+        el('stop', { offset: 0, 'stop-color': '#000', 'stop-opacity': 0 }, grad);
+        el('stop', { offset: 1, 'stop-color': '#000', 'stop-opacity': bordMax }, grad);
+      }
+      const bords = el('g', { class: 'penombre bords-brouillard' }, svg);
+      for (const i of vu) {
+        if (String(i) in (etat.penombre || {})) continue;
+        const x = i % L, y = Math.floor(i / L);
+        for (const c of COTES) {
+          const nx = x + c.dx, ny = y + c.dy;
+          if (nx < 0 || ny < 0 || nx >= L || ny >= H) continue;
+          const j = Plateau.idx(L, nx, ny);
+          if (vu.has(j) || g.zones[j] === '#' || !Plateau.ouvert(g, etat, i, j)) continue;
+          el('rect', { ...c.rect(x * T, y * T), fill: `url(#bord-${c.nom})` }, bords);
+        }
+      }
+
       // 10. Pénombre : la dernière case vue d'un couloir s'estompe vers le noir,
       //    dans la direction du regard (dégradé propre à chaque case).
-      const defs = el('defs', {}, svg);
       const penombre = el('g', { class: 'penombre' }, svg);
       for (const [c, [dx, dy]] of Object.entries(etat.penombre || {})) {
         const i = +c;
