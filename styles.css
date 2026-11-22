@@ -427,3 +427,12 @@ button.petit-bouton { min-width: 40px; min-height: 40px; font-size: 1rem; }
 .liste-sorts button .petit { color: var(--discret); font-weight: 400; }
 .liste-sorts button:disabled { opacity: 0.4; }
 .etat-heros { margin: 4px 0; font-size: 0.9rem; color: #c8b8ff; }
+
+/* Pictogrammes (icones.js, game-icons.net — CC BY 3.0) : la couleur passe par « color ». */
+svg .icone { pointer-events: none; overflow: visible; }
+.heros .icone { color: #fff6e0; }
+.monstre .icone { color: #c8f0a0; }
+.mobilier .icone { color: #f1e2c4; opacity: 0.9; }
+.escalier .icone { color: #2b2620; }
+.piege .icone { color: #ffd76a; }
+.piege.cache .icone { color: #ff8a7a; }

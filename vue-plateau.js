@@ -245,7 +245,8 @@ const VuePlateau = (() => {
         if (visible(Plateau.idx(L, x, y))) {
           const gr = el('g', { class: 'escalier' }, svg);
           el('rect', { x: x * T + 3, y: y * T + 3, width: 2 * T - 6, height: 2 * T - 6, rx: 4 }, gr);
-          for (let k = 1; k < 5; k++) el('line', { x1: x * T + 6, x2: x * T + 2 * T - 6, y1: y * T + k * 2 * T / 5, y2: y * T + k * 2 * T / 5 }, gr);
+          if (!Icones.poser(gr, 'plateau', 'escalier', (x + 1) * T, (y + 1) * T, T * 1.4))
+            for (let k = 1; k < 5; k++) el('line', { x1: x * T + 6, x2: x * T + 2 * T - 6, y1: y * T + k * 2 * T / 5, y2: y * T + k * 2 * T / 5 }, gr);
         }
       }
 
@@ -253,9 +254,25 @@ const VuePlateau = (() => {
       for (const m of quete.mobilier || []) {
         if (!visible(Plateau.idx(L, m.x, m.y))) continue;
         const gr = el('g', { class: 'mobilier m-' + m.type }, svg);
-        el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: (m.l || 1) * T - 8, height: (m.h || 1) * T - 8, rx: 3 }, gr);
-        const t = el('text', { x: (m.x + (m.l || 1) / 2) * T, y: (m.y + (m.h || 1) / 2) * T + 4, class: 'etiquette' }, gr);
-        t.textContent = (m.l || 1) > 1 || (m.h || 1) > 1 ? m.nom : m.nom.slice(0, 3);
+        const ml = m.l || 1, mh = m.h || 1;
+        el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: ml * T - 8, height: mh * T - 8, rx: 3 }, gr);
+        el('title', {}, gr).textContent = m.nom;
+        // Pictogramme centré ; sur un meuble allongé d'au moins 3 cases, le nom s'ajoute à côté.
+        const avecNom = Icones.existe('meuble', m.type) && Math.max(ml, mh) >= 3 && Math.min(ml, mh) === 1;
+        const taille = Math.min(ml, mh) * T * 0.75;
+        const icx = avecNom && ml >= mh ? (m.x + 0.5) * T : (m.x + ml / 2) * T;
+        const icy = avecNom && mh > ml ? (m.y + 0.5) * T : (m.y + mh / 2) * T;
+        if (Icones.poser(gr, 'meuble', m.type, icx, icy, taille)) {
+          if (avecNom) {
+            const vertical = mh > ml;
+            const t = el('text', { x: vertical ? (m.x + 0.5) * T : (m.x + 0.5 + ml / 2) * T, y: vertical ? (m.y + 0.5 + mh / 2) * T + 4 : (m.y + 0.5) * T + 4, class: 'etiquette' }, gr);
+            t.textContent = m.nom;
+          }
+        } else {
+          // Meuble sans pictogramme : son nom (abrégé sur une seule case).
+          const t = el('text', { x: (m.x + ml / 2) * T, y: (m.y + mh / 2) * T + 4, class: 'etiquette' }, gr);
+          t.textContent = ml > 1 || mh > 1 ? m.nom : m.nom.slice(0, 3);
+        }
         // Meuble piégé : ⚠ quand il est repéré (ou en vue MJ), tant qu'il n'est ni désamorcé ni déclenché.
         const st = etat.piegesMobilier?.[m.id];
         if (m.piege && st && !st.desamorce && !st.declenche && (st.trouve || vueMJ)) {
@@ -278,8 +295,10 @@ const VuePlateau = (() => {
           el('rect', { x: p.x * T + 4, y: p.y * T + 4, width: T - 8, height: T - 8, rx: 10 }, gp);
         } else {
           el('rect', { x: p.x * T + 3, y: p.y * T + 3, width: T - 6, height: T - 6, rx: 4 }, gp);
-          const t = el('text', { x: p.x * T + T / 2, y: p.y * T + T / 2 + 6, class: 'symbole-piege' }, gp);
-          t.textContent = SYMBOLES_PIEGES[p.type] || '!';
+          if (!Icones.poser(gp, 'piege', p.type, p.x * T + T / 2, p.y * T + T / 2, T * 0.68, 'icone symbole-piege')) {
+            const t = el('text', { x: p.x * T + T / 2, y: p.y * T + T / 2 + 6, class: 'symbole-piege' }, gp);
+            t.textContent = SYMBOLES_PIEGES[p.type] || '!';
+          }
         }
       }
 
@@ -326,9 +345,12 @@ const VuePlateau = (() => {
         if (!visible(Plateau.idx(L, m.x, m.y))) continue;
         const visableCible = ciblage && ciblesAttaque().some(c => c.id === m.id);
         const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : ''), 'data-monstre': m.id }, svg);
-        el('rect', { x: m.x * T + 5, y: m.y * T + 5, width: T - 10, height: T - 10, rx: 5 }, gr);
-        const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
-        t.textContent = infoMonstre(m.type).court;
+        el('rect', { x: m.x * T + 3, y: m.y * T + 3, width: T - 6, height: T - 6, rx: 5 }, gr);
+        el('title', {}, gr).textContent = m.nom || infoMonstre(m.type).nom;
+        if (!Icones.poser(gr, 'monstre', m.type, m.x * T + T / 2, m.y * T + T / 2, T - 9)) {
+          const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
+          t.textContent = infoMonstre(m.type).court;
+        }
       }
 
       // 6 bis. Tour de Zargon : trajet prévu du monstre en cours (cases visibles seulement)
@@ -364,9 +386,12 @@ const VuePlateau = (() => {
         const gr = el('g', { class: cls, 'data-heros': h.id }, svg);
         // Héros actif : anneau blanc autour du pion, visible quelle que soit sa couleur.
         if (cls.includes(' actif')) el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 1, class: 'anneau' }, gr);
-        el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 4 }, gr);
-        const t = el('text', { x: h.x * T + T / 2, y: h.y * T + T / 2 + 5 }, gr);
-        t.textContent = h.court;
+        el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 3 }, gr);
+        el('title', {}, gr).textContent = h.nom;
+        if (!Icones.poser(gr, 'heros', h.classe || h.id, h.x * T + T / 2, h.y * T + T / 2, T - 12)) {
+          const t = el('text', { x: h.x * T + T / 2, y: h.y * T + T / 2 + 5 }, gr);
+          t.textContent = h.court;
+        }
       }
 
       // 8 bis. Zones tactiles des portes, au-dessus des pions : un héros posé

@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.15.0';
+const VERSION_APP = '0.16.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -460,6 +460,9 @@ async function afficherAPropos() {
       <h2>Compagnon de quête ${VERSION_APP}</h2>
       <p>Application personnelle, à usage familial. Elle ne contient aucun texte, aucune illustration
          ni aucun logo officiel.</p>
+      <p>Pictogrammes : <strong>game-icons.net</strong>, licence Creative Commons BY 3.0.
+         Auteurs : Delapouite, Lorc et Skoll
+         (détail dans le fichier CREDITS.md du code). Fond retiré et couleurs adaptées.</p>
     </section>
     <section class="carte">
       <h2>Vos données</h2>
