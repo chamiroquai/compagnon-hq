@@ -42,14 +42,14 @@ const Inventaire = (() => {
         <button class="icone petit-bouton" data-inv-retirer="${k}" aria-label="Retirer">✕</button></span>`;
     return `
       <div class="bloc-inv">
-        <h4>Arme active</h4>
+        <h4>Arme active <span class="discret petit">· ses dés remplacent les dés d’attaque</span></h4>
         ${arme ? `<div class="ligne-inv">${champs(arme.o, arme.k, 'Dés d’attaque', 'Particularité : diagonale, à distance…')}
             ${boutons(arme.k, [`<button class="petit-bouton" data-inv-ranger="${arme.k}">Ranger</button>`])}</div>`
           : '<p class="discret petit">Aucune arme en main.</p>'}
         ${lectureSeule ? '' : '<button class="petit-bouton" data-inv-ajouter="arme">Nouvelle arme en main…</button>'}
       </div>
       <div class="bloc-inv">
-        <h4>Armure${bonus ? ` <span class="discret petit">· bonus total : +${bonus} dé${bonus > 1 ? 's' : ''} de défense</span>` : ''}</h4>
+        <h4>Armure <span class="discret petit">· ${bonus ? `+${bonus} dé${bonus > 1 ? 's' : ''} de défense au total` : 'ses bonus s’ajoutent aux dés de défense'}</span></h4>
         ${armures.length ? armures.map(({ o, k }) => `<div class="ligne-inv">${champs(o, k, 'Défense +', 'Note')}
             ${boutons(k, [`<button class="petit-bouton" data-inv-ranger="${k}">Ôter</button>`])}</div>`).join('')
           : '<p class="discret petit">Aucune pièce d’armure.</p>'}

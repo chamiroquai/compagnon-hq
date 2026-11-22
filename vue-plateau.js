@@ -64,7 +64,26 @@ const VuePlateau = (() => {
     // Dans une fosse : un dé de combat de moins en attaque et en défense (minimum 1).
     const penaliteFosse = (f, champ, n) => (n !== null && (champ === 'attaque' || champ === 'defense') && Plateau.fosseEn(etat, f.x, f.y) ? Math.max(1, n - 1) : n);
     const bonusSorts = (h, champ, n) => (n === null ? n : n + (champ === 'attaque' && h.courage ? 2 : 0) + (champ === 'defense' && h.peauRoc ? 2 : 0));
-    const caracHeros = (h, champ) => bonusSorts(h, champ, penaliteFosse(h, champ, caracBrute(h, champ)));
+    /* Équipement (inventaire.js), décision de l'utilisateur du 22/11/2026 :
+       l'arme en main REMPLACE les dés d'attaque (si ses dés sont indiqués) ;
+       les pièces d'armure AJOUTENT leurs bonus aux dés de défense. */
+    const armeEnMain = h => Inventaire.tri(h?.inventaire || []).arme?.o || null;
+    const avecEquipement = (h, champ, n) => {
+      if (champ === 'attaque') { const a = armeEnMain(h); return a && Number.isFinite(a.des) ? a.des : n; }
+      if (champ === 'defense') { const b = Inventaire.bonusArmure(h?.inventaire || []); return n === null ? n : n + b; }
+      return n;
+    };
+    const caracHeros = (h, champ) => bonusSorts(h, champ, penaliteFosse(h, champ, avecEquipement(h, champ, caracBrute(h, champ))));
+    // Explication courte du nombre de dés (fiche du héros).
+    function detailDes(h, champ) {
+      const base = caracBrute(h, champ), parts = [];
+      if (champ === 'attaque') { const a = armeEnMain(h); if (a && Number.isFinite(a.des)) parts.push(`${a.nom}`); }
+      if (champ === 'defense') { const b = Inventaire.bonusArmure(h?.inventaire || []); if (b && base !== null) parts.push(`${base} + ${b} d’armure`); }
+      if (Plateau.fosseEn(etat, h.x, h.y)) parts.push('−1 dans la fosse');
+      if (champ === 'attaque' && h.courage) parts.push('+2 Courage');
+      if (champ === 'defense' && h.peauRoc) parts.push('+2 Peau de roc');
+      return parts.length ? ` <span class="discret petit">(${parts.map(echapperTexte).join(', ')})</span>` : '';
+    }
     const caracMonstre = (m, champ) => penaliteFosse(m, champ, Regles.valeurMonstre(caracs, m, champ));
     // Points de Vie (champ « corps ») et d'Esprit de départ, d'après les caractéristiques saisies.
     // (Seulement s'ils n'existent pas encore : une quête en cours garde ses valeurs.)
@@ -2201,7 +2220,7 @@ const VuePlateau = (() => {
       ficheHeros = hid;
       const classe = Regles.TYPES_HEROS.find(t => t.id === (h.classe || h.id))?.nom || '';
       const manque = ['attaque', 'defense'].filter(c => caracHeros(h, c) === null).map(c => c === 'attaque' ? 'dés d’attaque' : 'dés de défense');
-      const ligne = (nom, champ) => `<tr><th>${nom}</th><td>${caracHeros(h, champ) ?? '?'}</td></tr>`;
+      const ligne = (nom, champ) => `<tr><th>${nom}</th><td>${caracHeros(h, champ) ?? '?'}${detailDes(h, champ)}</td></tr>`;
       const compteur = (nom, champ, pas = [1]) => `
         <div class="compteur-fiche">
           <span>${nom}</span>
