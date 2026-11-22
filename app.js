@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.28.0';
+const VERSION_APP = '0.29.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -27,6 +27,19 @@ function nouvelId() {
 function dateLisible(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// Propose un fichier JSON à enregistrer (sur l'iPad : « Enregistrer dans Fichiers »). Rien n'est envoyé ailleurs.
+function telechargerJson(contenu, nomFichier) {
+  const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nomFichier;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 function joursDepuis(iso) {
@@ -380,7 +393,7 @@ async function afficherSauvegardes() {
   vue.innerHTML = `
     <section class="carte">
       <h2>Sauvegarder</h2>
-      <p>Crée un fichier contenant toutes vos parties (${nb}). Sur l’iPad, choisissez ensuite
+      <p>Crée un fichier contenant toutes vos parties (${nb}), vos héros et vos groupes. Sur l’iPad, choisissez ensuite
          « Enregistrer dans Fichiers ». Ce fichier vous appartient : il ne quitte l’iPad que si vous le déplacez.</p>
       <p class="discret petit">Dernière sauvegarde : ${dateLisible(derniere)}</p>
       <button id="btn-exporter" class="principal">Créer le fichier de sauvegarde</button>
@@ -410,16 +423,9 @@ async function exporter() {
     cartesTresor: await Stockage.lireReglage('cartesTresor') || [],
     equipementDepart: await Stockage.lireReglage('equipementDepart') || null,
     imagePlateau: await Stockage.lireReglage('imagePlateau') || null,
+    groupes: await Heros.lireGroupes(),
   };
-  const blob = new Blob([JSON.stringify(contenu, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `compagnon-sauvegarde-${maintenant.slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  telechargerJson(contenu, `compagnon-sauvegarde-${maintenant.slice(0, 10)}.json`);
   await Stockage.ecrireReglage('derniereSauvegarde', maintenant);
   verifierRappel();
   if (!partieOuverte) afficherSauvegardes();
@@ -442,6 +448,11 @@ async function importerFichier(fichier) {
   } catch {
     return dire('Ce fichier n’est pas un fichier JSON lisible.', 'erreur');
   }
+  // Un fichier de héros ou de groupe ouvert ici est accepté aussi.
+  if (donnees?.format === Heros.FORMAT_HEROS) {
+    const r = await Heros.importer(donnees);
+    return dire(r.erreur || (r.annule ? 'Ouverture annulée.' : r.succes), r.erreur ? 'erreur' : r.succes ? 'succes' : '');
+  }
   if (donnees?.format !== FORMAT_SAUVEGARDE) return dire('Ce fichier n’est pas une sauvegarde du Compagnon de quête.', 'erreur');
   if (donnees.versionFormat > VERSION_FORMAT) return dire('Cette sauvegarde vient d’une version plus récente de l’application : mettez-la à jour d’abord.', 'erreur');
   if (!Array.isArray(donnees.parties)) return dire('La sauvegarde ne contient pas de liste de parties.', 'erreur');
@@ -455,6 +466,7 @@ async function importerFichier(fichier) {
     + (donnees.caracteristiques ? '\nLes caractéristiques (héros et monstres) du fichier remplaceront celles de cet iPad.' : '')
     + (donnees.equipementDepart ? '\nL’équipement de départ des héros du fichier remplacera celui de cet iPad.' : '')
     + (Array.isArray(donnees.personnages) && donnees.personnages.length ? `\n${donnees.personnages.length} personnage(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
+    + (Array.isArray(donnees.groupes) && donnees.groupes.length ? `\n${donnees.groupes.length} groupe(s) enregistré(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
     + '\n\nContinuer ?';
   if (!confirm(message)) return dire('Restauration annulée.');
 
@@ -463,6 +475,11 @@ async function importerFichier(fichier) {
   }
   for (const p of Array.isArray(donnees.personnages) ? donnees.personnages : []) {
     if (p && typeof p.id === 'string' && typeof p.nom === 'string') await Stockage.enregistrerPersonnage(p);
+  }
+  if (Array.isArray(donnees.groupes) && donnees.groupes.length) {
+    const recus = donnees.groupes.filter(g => g && typeof g.id === 'string' && typeof g.nom === 'string' && g.membres && typeof g.membres === 'object');
+    const deja = (await Heros.lireGroupes()).filter(x => !recus.some(g => g.id === x.id));
+    await Stockage.ecrireReglage('groupes', [...deja, ...recus]);
   }
   if (Array.isArray(donnees.cartesTresor) && donnees.cartesTresor.length) await Stockage.ecrireReglage('cartesTresor', donnees.cartesTresor);
   if (donnees.equipementDepart && typeof donnees.equipementDepart === 'object') await Stockage.ecrireReglage('equipementDepart', donnees.equipementDepart);

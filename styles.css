@@ -377,7 +377,7 @@ table.caracs.petite { margin-top: 8px; }
 .combattant .role { color: #ffb36b; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
 
 /* ---------- Personnages et groupe (v0.11.0) ---------- */
-.choix-classe, .case-groupe select {
+.choix-classe, .case-groupe select, #choix-groupe {
   min-height: 48px; font: inherit; color: var(--texte); background: #3a3226;
   border: 1px solid var(--bord); border-radius: 10px; padding: 0 10px;
 }
@@ -506,3 +506,12 @@ svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }
 .interrupteur.actif text { fill: #a8e896; }
 .interrupteur.cache circle { fill: rgba(255, 90, 74, 0.10); stroke: #ff5a4a; }
 .interrupteur.cache text { fill: #ff8a7a; }
+
+/* Groupes enregistrés (v0.29.0) */
+.liste-groupes { list-style: none; padding: 0; margin: 0 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.liste-groupes li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 0; border-bottom: 1px solid rgba(127, 127, 127, .25); }
+#form-groupe { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+#form-groupe .grille-groupe { width: 100%; }
+#groupe-nom { width: min(100%, 420px); }
+.groupe-enregistre { margin-top: 12px; }
