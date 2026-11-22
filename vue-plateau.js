@@ -232,6 +232,9 @@ const VuePlateau = (() => {
       enregistrer();
       msg('Action annulée.');
       dessiner();
+      // Une fiche restée ouverte montre l'état rétabli.
+      const fiche = conteneur.querySelector('#pl-fiche');
+      if (fiche && !fiche.hidden && ficheHeros && etat.heros.some(k => k.id === ficheHeros)) ouvrirFiche(ficheHeros);
     }
 
     /* ---------- Dessin ---------- */
@@ -2123,7 +2126,8 @@ const VuePlateau = (() => {
       if (receveurId) modifier(e => {
         const z = e.heros.find(q => q.id === hid), r = e.heros.find(q => q.id === receveurId);
         r.or = (r.or || 0) + (z.or || 0);
-        r.inventaire = [...(r.inventaire || []), ...(z.inventaire || [])];
+        // Ce qui est récupéré va avec les « autres objets » de celui qui le reprend.
+        r.inventaire = [...(r.inventaire || []), ...(z.inventaire || []).map(({ emplacement, ...o }) => o)];
         z.or = 0; z.inventaire = [];
       });
       else dessiner();
@@ -2190,9 +2194,11 @@ const VuePlateau = (() => {
 
     /* ---------- Fiche d'un héros ---------- */
 
+    let ficheHeros = null; // héros dont la fiche est ouverte (pour la rafraîchir après ↶)
     function ouvrirFiche(hid) {
       const h = etat.heros.find(k => k.id === hid);
       const fiche = conteneur.querySelector('#pl-fiche');
+      ficheHeros = hid;
       const classe = Regles.TYPES_HEROS.find(t => t.id === (h.classe || h.id))?.nom || '';
       const manque = ['attaque', 'defense'].filter(c => caracHeros(h, c) === null).map(c => c === 'attaque' ? 'dés d’attaque' : 'dés de défense');
       const ligne = (nom, champ) => `<tr><th>${nom}</th><td>${caracHeros(h, champ) ?? '?'}</td></tr>`;
@@ -2221,11 +2227,7 @@ const VuePlateau = (() => {
         <table class="caracs petite"><tbody>${ligne('Dés d’attaque', 'attaque')}${ligne('Dés de défense', 'defense')}</tbody></table>
         ${sortsDe(h).length ? `<h3>Sorts</h3><p class="petit">${sortsDe(h).map(x => `${Sorts.sort(x.id).nom}${x.utilise ? ' <span class="discret">(utilisé)</span>' : ''}`).join(' · ')}</p>` : ''}
         <h3>Inventaire</h3>
-        ${inventaire.length ? `<ul class="inventaire">${inventaire.map((o, k) => `<li><span>${echapperTexte(o.nom)}${Number.isFinite(o.soin) ? ` <span class="discret petit">(+${o.soin} Vie)</span>` : ''}</span>
-            ${estPotion(o) && !h.mort ? `<button class="petit-bouton" data-boire="${k}">Boire</button>` : ''}
-            <button class="icone petit-bouton" data-retirer="${k}" aria-label="Retirer ${echapperTexte(o.nom)}">✕</button></li>`).join('')}</ul>`
-          : '<p class="discret petit">Vide.</p>'}
-        <button id="fi-ajouter">Ajouter un objet</button>
+        ${Inventaire.html(inventaire, { peutBoire: !h.mort })}
         <p class="discret petit">Or et inventaire sont enregistrés dans le personnage à la fin de la quête (menu ☰).
           Les boutons − et + s’annulent avec ↶.</p>`;
       fiche.hidden = false;
@@ -2239,10 +2241,10 @@ const VuePlateau = (() => {
         });
         ouvrirFiche(hid);
       }));
-      fiche.querySelectorAll('[data-retirer]').forEach(b => b.addEventListener('click', () => {
-        modifier(e => { e.heros.find(z => z.id === hid).inventaire.splice(+b.dataset.retirer, 1); });
+      Inventaire.brancher(fiche, fn => {
+        modifier(e => { const k = e.heros.find(z => z.id === hid); fn(k.inventaire = k.inventaire || []); });
         ouvrirFiche(hid);
-      }));
+      }, h.nom);
       fiche.querySelectorAll('[data-boire]').forEach(b => b.addEventListener('click', () => {
         const k = +b.dataset.boire, o = h.inventaire[k];
         let valeur = o.soin;
@@ -2257,12 +2259,6 @@ const VuePlateau = (() => {
       fiche.querySelector('#fi-secours')?.addEventListener('click', () => {
         fiche.hidden = true;
         modifier(e => { delete e.heros.find(z => z.id === hid).secoursReporte; });
-      });
-      fiche.querySelector('#fi-ajouter').addEventListener('click', () => {
-        const nom = prompt(`Objet à ajouter à l’inventaire de ${h.nom} :`);
-        if (!nom || !nom.trim()) return;
-        modifier(e => { const k = e.heros.find(z => z.id === hid); (k.inventaire = k.inventaire || []).push({ nom: nom.trim().slice(0, 80) }); });
-        ouvrirFiche(hid);
       });
     }
 

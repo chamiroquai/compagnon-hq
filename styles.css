@@ -67,7 +67,7 @@ button:active { filter: brightness(1.25); }
 button.principal { background: var(--or-sombre); border-color: var(--or); color: #1b1712; font-weight: 600; }
 button.danger { border-color: var(--danger); color: #f0a89a; }
 
-input[type="text"], textarea {
+input[type="text"], .champs-inv input[type="number"], textarea {
   width: 100%; padding: 12px;
   font: inherit; color: var(--texte);
   background: #1f1a14; border: 1px solid var(--bord); border-radius: 10px;
@@ -449,3 +449,14 @@ svg .icone { pointer-events: none; overflow: visible; }
 .combattant .vie.touche { animation: touche 0.9s ease-out; }
 @keyframes touche { 0% { color: #ff5a4a; transform: scale(1.35); } 100% { color: inherit; transform: scale(1); } }
 .combattant .vie { display: inline-block; }
+
+/* Inventaire en trois blocs (inventaire.js) */
+.bloc-inv { border: 1px solid var(--bord); border-radius: 8px; padding: 8px 10px; margin: 0 0 10px; background: #1a1612; }
+.bloc-inv h4 { margin: 0 0 6px; font-size: 0.95em; color: var(--or); }
+.bloc-inv .inventaire { margin-bottom: 6px; }
+.ligne-inv { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px; margin-bottom: 6px; background: #1f1a14; border: 1px solid var(--bord); border-radius: 8px; }
+.champs-inv { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 260px; }
+.champs-inv input[type=text] { flex: 1 1 140px; min-width: 0; }
+.champs-inv input.note-inv { flex: 2 1 180px; }
+.champs-inv input[type=number] { width: 4.2em; text-align: center; }
+.actions-inv { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }

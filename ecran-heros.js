@@ -134,13 +134,7 @@ const Heros = (() => {
       </section>
       <section class="carte">
         <h2>Inventaire</h2>
-        ${(p.inventaire || []).length ? `<ul class="inventaire">${p.inventaire.map((o, k) => `<li><span>${echapper(o.nom)}</span>
-          <button class="icone petit-bouton" data-retirer="${k}" aria-label="Retirer">✕</button></li>`).join('')}</ul>`
-          : '<p class="discret">Vide.</p>'}
-        <form id="pf-form-objet" class="ligne">
-          <input id="pf-objet" type="text" placeholder="Objet (ex. Potion de soin)" maxlength="80">
-          <button type="submit">Ajouter</button>
-        </form>
+        <div id="pf-inventaire">${Inventaire.html(p.inventaire || [])}</div>
       </section>
       <section class="carte">
         <h2>Journal des quêtes</h2>
@@ -165,16 +159,11 @@ const Heros = (() => {
       if (inp.dataset.cle === 'or' && p.or === null) p.or = 0;
       await sauver();
     }));
-    $('#pf-form-objet').addEventListener('submit', async e => {
-      e.preventDefault();
-      const n = $('#pf-objet').value.trim();
-      if (!n) return;
-      p.inventaire = [...(p.inventaire || []), { nom: n.slice(0, 80) }];
+    Inventaire.brancher($('#pf-inventaire'), async fn => {
+      p.inventaire = p.inventaire || [];
+      fn(p.inventaire);
       await sauver(); afficherFiche(id);
-    });
-    vue.querySelectorAll('[data-retirer]').forEach(b => b.addEventListener('click', async () => {
-      p.inventaire.splice(+b.dataset.retirer, 1); await sauver(); afficherFiche(id);
-    }));
+    }, p.nom);
     $('#pf-revivre')?.addEventListener('click', async () => { p.mort = false; await sauver(); afficherFiche(id); });
     $('#pf-supprimer').addEventListener('click', async () => {
       if (!confirm(`Supprimer définitivement ${p.nom} ? (Pensez à une sauvegarde.)`)) return;
