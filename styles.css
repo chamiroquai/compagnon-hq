@@ -438,5 +438,5 @@ svg .icone { pointer-events: none; overflow: visible; }
 .piege.cache .icone { color: #ff8a7a; }
 .ordre-jeu li.mort { opacity: 0.4; }
 
-/* Le pincement sur le plateau zoome le plateau (géré en JavaScript), pas la page. */
-.jeu-plateau .cadre-plateau { touch-action: pan-x pan-y; }
+/* Pincement (zoom) et glissement à un doigt du plateau : gérés en JavaScript (vue-plateau.js), pas par Safari. */
+.jeu-plateau .cadre-plateau { touch-action: none; }

@@ -147,7 +147,7 @@ const VuePlateau = (() => {
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
-              <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer.</li>
+              <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
                   dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
               <li>Touchez un message pour le faire disparaître.</li>
@@ -2255,9 +2255,19 @@ const VuePlateau = (() => {
        situé entre les doigts reste sous les doigts ; déplacer les deux doigts fait aussi glisser
        le plateau. Un doigt : défilement normal du cadre. */
     let pince = null;
+    // Glissement à un doigt : un toucher ne devient un glissement qu'au-delà de SEUIL pixels,
+    // pour que les touchers brefs (choisir une case, un pion, une porte) restent des touchers.
+    const SEUIL = 10;
+    let glisse = null, finGlisse = 0;
     const milieu = t => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
     const ecart = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1;
     cadre.addEventListener('touchstart', e => {
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        glisse = { x: t.clientX, y: t.clientY, sl: cadre.scrollLeft, st: cadre.scrollTop, actif: false };
+        return;
+      }
+      glisse = null;
       if (e.touches.length !== 2) return;
       const m = milieu(e.touches), r = cadre.getBoundingClientRect();
       const larg = svg.width.baseVal.value || 1, haut = svg.height.baseVal.value || 1;
@@ -2269,6 +2279,15 @@ const VuePlateau = (() => {
     }, { passive: false });
     let image = 0;
     cadre.addEventListener('touchmove', e => {
+      if (glisse && e.touches.length === 1) {
+        const t = e.touches[0], dx = t.clientX - glisse.x, dy = t.clientY - glisse.y;
+        if (!glisse.actif && Math.hypot(dx, dy) < SEUIL) return;
+        glisse.actif = true;
+        e.preventDefault();
+        cadre.scrollLeft = glisse.sl - dx;
+        cadre.scrollTop = glisse.st - dy;
+        return;
+      }
       if (!pince || e.touches.length !== 2) return;
       e.preventDefault(); // pas de zoom ni de défilement de la page
       const t = [e.touches[0], e.touches[1]];
@@ -2284,6 +2303,10 @@ const VuePlateau = (() => {
       });
     }, { passive: false });
     const finPince = e => {
+      if (glisse && e.touches.length === 0) {
+        if (glisse.actif) finGlisse = Date.now();
+        glisse = null;
+      }
       if (!pince || e.touches.length >= 2) return;
       pince = null;
       zoom = Math.round(zoom * 100) / 100;
@@ -2291,6 +2314,10 @@ const VuePlateau = (() => {
     };
     cadre.addEventListener('touchend', finPince);
     cadre.addEventListener('touchcancel', finPince);
+    // Après un glissement, le « clic » éventuel du navigateur ne doit rien sélectionner.
+    cadre.addEventListener('click', e => {
+      if (Date.now() - finGlisse < 250) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
     // Safari : les « gestes » (pincement) zoomeraient toute la page ; on les bloque sur l'écran de jeu.
     const bloquerGeste = e => { if (document.body.classList.contains('mode-jeu')) e.preventDefault(); };
     if (!window.__gestesBloques) {
