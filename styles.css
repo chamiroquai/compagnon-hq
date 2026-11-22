@@ -465,3 +465,5 @@ svg .icone { pointer-events: none; overflow: visible; }
 .equipement-classe { border: 1px solid var(--bord); border-radius: 8px; padding: 6px 10px; margin: 0 0 8px; }
 .equipement-classe summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
 .equipement-classe[open] summary { margin-bottom: 6px; }
+
+.des-combat { margin: 4px 0 8px; }

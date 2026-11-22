@@ -112,6 +112,17 @@ const Heros = (() => {
     vue.querySelectorAll('.ouvrir-perso').forEach(b => b.addEventListener('click', () => afficherFiche(b.dataset.id)));
   }
 
+  /* Dés utilisés en combat, avec l'équipement (même calcul que vue-plateau.js, écart 30) :
+     l'arme en main remplace les dés d'attaque, l'armure s'ajoute aux dés de défense. */
+  function desCombat(p) {
+    const { arme } = Inventaire.tri(p.inventaire || []);
+    const bonus = Inventaire.bonusArmure(p.inventaire || []);
+    const att = arme && Number.isFinite(arme.o.des) ? `${arme.o.des} (${echapper(arme.o.nom)})`
+      : `${p.attaque ?? '?'}${arme ? ` (⚠ dés de « ${echapper(arme.o.nom)} » non indiqués)` : ' (mains nues)'}`;
+    const def = p.defense == null ? '?' : bonus ? `${p.defense + bonus} (${p.defense} + ${bonus} d’armure)` : `${p.defense}`;
+    return `<strong>En combat</strong> : attaque ${att} · défense ${def}`;
+  }
+
   /* ---------- Écran : fiche d'un personnage ---------- */
 
   async function afficherFiche(id) {
@@ -133,10 +144,11 @@ const Heros = (() => {
         <div class="grille-champs">
           ${champ('Points de Vie (max.)', 'vieMax')}
           ${champ('Points d’Esprit (max.)', 'espritMax')}
-          ${champ('Dés d’attaque', 'attaque')}
-          ${champ('Dés de défense', 'defense')}
+          ${champ('Dés d’attaque (mains nues)', 'attaque')}
+          ${champ('Dés de défense (sans armure)', 'defense')}
           ${champ('Pièces d’or', 'or')}
         </div>
+        <p class="des-combat">${desCombat(p)}</p>
         <p id="pf-etat" class="discret petit">Enregistrement automatique.</p>
       </section>
       <section class="carte">

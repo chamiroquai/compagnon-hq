@@ -77,7 +77,7 @@ const VuePlateau = (() => {
     // Explication courte du nombre de dés (fiche du héros).
     function detailDes(h, champ) {
       const base = caracBrute(h, champ), parts = [];
-      if (champ === 'attaque') { const a = armeEnMain(h); if (a && Number.isFinite(a.des)) parts.push(`${a.nom}`); }
+      if (champ === 'attaque') { const a = armeEnMain(h); if (a && Number.isFinite(a.des)) parts.push(`${a.nom}`); else if (a) parts.push(`⚠ dés de « ${a.nom} » non indiqués`); else parts.push('mains nues'); }
       if (champ === 'defense') { const b = Inventaire.bonusArmure(h?.inventaire || []); if (b && base !== null) parts.push(`${base} + ${b} d’armure`); }
       if (Plateau.fosseEn(etat, h.x, h.y)) parts.push('−1 dans la fosse');
       if (champ === 'attaque' && h.courage) parts.push('+2 Courage');
@@ -2247,6 +2247,7 @@ const VuePlateau = (() => {
         ${sortsDe(h).length ? `<h3>Sorts</h3><p class="petit">${sortsDe(h).map(x => `${Sorts.sort(x.id).nom}${x.utilise ? ' <span class="discret">(utilisé)</span>' : ''}`).join(' · ')}</p>` : ''}
         <h3>Inventaire</h3>
         ${Inventaire.html(inventaire, { peutBoire: !h.mort })}
+        ${h.mort ? '' : '<button id="fi-equipement" class="petit-bouton">Ajouter l’équipement de départ (Réglages)</button>'}
         <p class="discret petit">Or et inventaire sont enregistrés dans le personnage à la fin de la quête (menu ☰).
           Les boutons − et + s’annulent avec ↶.</p>`;
       fiche.hidden = false;
@@ -2275,6 +2276,20 @@ const VuePlateau = (() => {
         boirePotion(hid, k, valeur);
         ouvrirFiche(hid);
       }));
+      fiche.querySelector('#fi-equipement')?.addEventListener('click', async () => {
+        const e = await Stockage.lireReglage('equipementDepart');
+        const ajout = JSON.parse(JSON.stringify(e?.[h.classe || h.id] || []));
+        if (!ajout.length) return msg('Aucun équipement de départ pour ce héros (Réglages › Équipement de départ).');
+        modifier(et => {
+          const k = et.heros.find(z => z.id === hid);
+          k.inventaire = k.inventaire || [];
+          // Une seule arme en main : si le héros en tient déjà une, l'arme de départ va avec les autres objets.
+          if (k.inventaire.some(o => o.emplacement === 'arme')) ajout.forEach(o => { if (o.emplacement === 'arme') delete o.emplacement; });
+          k.inventaire.push(...ajout);
+        });
+        msg(`Équipement de départ ajouté à ${h.nom} (↶ pour annuler).`);
+        ouvrirFiche(hid);
+      });
       fiche.querySelector('#fi-secours')?.addEventListener('click', () => {
         fiche.hidden = true;
         modifier(e => { delete e.heros.find(z => z.id === hid).secoursReporte; });
