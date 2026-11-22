@@ -440,3 +440,7 @@ svg .icone { pointer-events: none; overflow: visible; }
 
 /* Pincement (zoom) et glissement à un doigt du plateau : gérés en JavaScript (vue-plateau.js), pas par Safari. */
 .jeu-plateau .cadre-plateau { touch-action: none; }
+
+/* Compteur de pas du tour : numéro discret dans le coin des cases parcourues. */
+.trace-pas { pointer-events: none; }
+.trace-pas text { fill: #fff; opacity: 0.5; font-size: 12px; font-weight: 700; text-anchor: start; paint-order: stroke; stroke: #000; stroke-width: 2px; stroke-opacity: 0.5; }

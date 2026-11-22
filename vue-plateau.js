@@ -141,9 +141,11 @@ const VuePlateau = (() => {
             <h3>Comment ça marche</h3>
             <ul class="puces petit">
               <li>Le héros dont c’est le tour porte un anneau blanc. « Actions » ouvre la fenêtre de ses choix :
-                  « Se déplacer » (lancez vos 2 dés rouges, touchez le total, puis les cases une par une — les cases possibles
-                  sont encadrées), « Terminer le déplacement », « Attaquer »… La croix ✕ la referme.</li>
-              <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : touchez son pion sur le plateau, ou sa pastille dans l’ordre de jeu en haut.</li>
+                  « Attaquer », « Lancer un sort », fouilles… La croix ✕ la referme.</li>
+              <li>Se déplacer : touchez le héros dont c’est le tour, puis les cases éclairées une par une (lancez vos dés rouges et comptez vous-mêmes).
+                  Le numéro de chaque pas s’inscrit discrètement dans le coin de la case ; un retour en arrière compte aussi.
+                  Touchez à nouveau le héros pour s’arrêter. Les numéros s’effacent à la fin du tour.</li>
+              <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : bouton « Fiche » en haut pour le héros actif, ou touchez sa pastille dans l’ordre de jeu, ou le pion d’un autre héros.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche.</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
@@ -378,10 +380,10 @@ const VuePlateau = (() => {
       const actif = herosActif();
       if (!vueMJ && actif && etat.tour.deplacement) {
         const cibles = el('g', { class: 'cibles' }, svg);
+        const effets = etat.tour.deplacement.effets || {};
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nx = actif.x + dx, ny = actif.y + dy;
-          if (Plateau.raisonBlocage(g, etat, actif.x, actif.y, nx, ny)) continue;
-          if (etat.tour.deplacement.restant === 1 && Plateau.autreHerosEn(etat, actif.id, nx, ny)) continue;
+          if (raisonDeplacementSort(actif, nx, ny, effets)) continue;
           el('rect', { x: nx * T + 3, y: ny * T + 3, width: T - 6, height: T - 6, rx: 6 }, cibles);
         }
       }
@@ -405,6 +407,16 @@ const VuePlateau = (() => {
       //        contre une porte ne doit pas empêcher de la toucher.
       const couchePortes = el('g', { class: 'portes-tactiles' }, svg);
       for (const z of zonesPortes) el('rect', z.attrs, el('g', { 'data-porte': z.id }, couchePortes));
+
+      // Compteur de pas du tour (en filigrane, dans le coin des cases parcourues ; effacé à la fin du tour).
+      if (!vueMJ && actif && etat.tour.trace) {
+        const gt = el('g', { class: 'trace-pas' }, svg);
+        for (const [cle, n] of Object.entries(etat.tour.trace)) {
+          const [x, y] = cle.split(',').map(Number);
+          if (!visible(Plateau.idx(L, x, y))) continue;
+          el('text', { x: x * T + 4, y: y * T + T * 0.3 }, gt).textContent = n;
+        }
+      }
 
       // 9. Brouillard
       const brouillard = el('g', { class: 'brouillard' }, svg);
@@ -476,6 +488,9 @@ const VuePlateau = (() => {
         if (monstreTouche) return choisirCible(monstreTouche.dataset.monstre);
         return msg('Touchez un monstre entouré de rouge, ou « Retour ».');
       }
+      // Toucher le héros actif : commencer ou arrêter son déplacement.
+      const actifTouche = herosActif();
+      if (actifTouche && (heros?.dataset.heros === actifTouche.id || (c && c.x === actifTouche.x && c.y === actifTouche.y))) return basculerDeplacement();
       // Pendant un déplacement, toucher une case fait avancer le héros actif.
       if (c && etat.tour?.deplacement) return avancer(c);
       // Toucher le pion d'un héros (hors déplacement) ouvre sa fiche.
@@ -571,43 +586,49 @@ const VuePlateau = (() => {
       } else {
         // Bandeau réduit : les choix détaillés sont dans la fenêtre « Actions ».
         html += `<strong>${actif.nom}</strong></span>
-          ${t.deplacement ? `<span class="compteur" title="cases restantes">${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''}</span>` : ''}
-          <button id="tr-actions">Actions / Déplacement</button>
+          <button id="tr-actions">Actions</button>
+          <button id="tr-fiche">Fiche</button>
           <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       }
       p.innerHTML = html;
       const sur = (sel, f) => p.querySelector(sel)?.addEventListener('click', f);
       sur('#tr-actions', () => { fenetreActions = 'menu'; dessiner(); });
       sur('#tr-fin-tour', finDuTour);
+      sur('#tr-fiche', () => ouvrirFiche(herosActif().id));
       sur('#tr-fin-zargon', finTourZargon);
       sur('#tr-retour-attaque', () => { ciblage = false; msg(''); dessiner(); });
     }
 
-    // Fenêtre « Actions » du héros actif : null (fermée), 'menu' (choix) ou 'des' (total des dés).
+    // Fenêtre « Actions » du héros actif : null (fermée), 'menu' (choix) ou 'sorts'.
     let fenetreActions = null;
 
-    function commencerDeplacement() {
-      fenetreActions = 'des'; ciblage = false; combat = null; conclusion = null;
+    /* Déplacement : toucher le héros actif le commence (sans saisir les dés : les joueurs
+       comptent eux-mêmes), le toucher à nouveau l'arrête. Pas de limite de cases ; chaque pas,
+       retour en arrière compris, augmente le compteur affiché en filigrane jusqu'à la fin du tour. */
+    function basculerDeplacement() {
+      if (etat.tour.deplacement) return terminerDeplacement();
       const actif = herosActif();
+      fenetreActions = null; ciblage = false; combat = null; conclusion = null;
+      const avert = [];
       // Écart n° 1 : un seul déplacement par tour. On avertit, on ne bloque pas.
-      msg(etat.tour.aBouge
-        ? `⚠ ${actif.nom} s’est déjà déplacé ce tour-ci (règle : un seul déplacement par tour). Vous pouvez continuer.`
-        : `Lancez les 2 dés rouges pour ${actif.nom}, puis touchez le total.`);
-      dessiner();
-    }
-
-    function choisirTotal(n) {
-      fenetreActions = null;
-      const hid = herosActif().id;
+      if (etat.tour.aBouge) avert.push(`⚠ ${actif.nom} s’est déjà déplacé ce tour-ci (règle : un seul déplacement par tour).`);
+      if (actif.endormi) avert.push(`⚠ ${actif.nom} est endormi.`);
+      if (actif.passeTour) avert.push(`⚠ Tempête : ${actif.nom} devrait passer ce tour.`);
       modifier(e => {
-        const k = e.heros.find(z => z.id === hid);
+        const k = e.heros.find(z => z.id === actif.id);
         // Sorts « au prochain déplacement » : ils s'appliquent à ce déplacement, puis disparaissent.
         const effets = { brume: !!k.brume, traverse: !!k.traverse };
         delete k.brume; delete k.traverse; delete k.ventVif;
-        e.tour.deplacement = { total: n, restant: n, effets };
+        e.tour.deplacement = { effets };
         e.tour.aBouge = true;
       });
-      msg(`${herosActif().nom} peut avancer de ${n} cases : touchez les cases une par une.`);
+      msg(...avert, `${actif.nom} se déplace : touchez les cases éclairées. Touchez ${actif.nom} pour s’arrêter.`);
+    }
+
+    // Un pas (ou un saut de 2 cases) : compteur du tour et numéro inscrit sur la case d'arrivée.
+    function compterPas(e, x, y, n = 1) {
+      e.tour.pas = (e.tour.pas || 0) + n;
+      (e.tour.trace = e.tour.trace || {})[x + ',' + y] = e.tour.pas;
     }
 
     function avancer({ x, y }) {
@@ -615,9 +636,6 @@ const VuePlateau = (() => {
       const effets = etat.tour.deplacement?.effets || {};
       const raison = raisonDeplacementSort(actif, x, y, effets);
       if (raison) return msg(raison);
-      const monstreLa = etat.monstres.some(m => m.x === x && m.y === y);
-      if (monstreLa && etat.tour.deplacement.restant === 1)
-        return msg('Voile de brume : on traverse la case d’un monstre, mais on ne peut pas s’y arrêter.');
       // Piège connu sur la case : on propose de sauter (ou de descendre dans la fosse).
       const piege = Plateau.piegeEn(etat, x, y);
       if (piege && (piege.trouve || piege.declenche)) {
@@ -625,18 +643,17 @@ const VuePlateau = (() => {
         return dessiner();
       }
       const surHeros = Plateau.autreHerosEn(etat, actif.id, x, y);
-      if (surHeros && etat.tour.deplacement.restant === 1)
-        return msg(`Dernière case : on ne peut pas s’arrêter sur la case de ${surHeros.nom}.`);
+      const surMonstre = etat.monstres.some(m => m.x === x && m.y === y);
       const depuis = [actif.x, actif.y];
       modifier(e => {
         const h = e.heros.find(k => k.id === actif.id);
         h.x = x; h.y = y;
-        e.tour.deplacement.restant -= 1;
-        if (e.tour.deplacement.restant <= 0) e.tour.deplacement = null;
+        compterPas(e, x, y);
       });
       // Piège caché : il se déclenche sous les pieds du héros.
       if (piege) return declencherPiege(piege.id, depuis, [x - depuis[0], y - depuis[1]]);
-      msg(etat.tour.deplacement ? (surHeros ? `${actif.nom} passe la case de ${surHeros.nom}.` : '') : `${actif.nom} a utilisé tout son déplacement.`);
+      msg(surHeros ? `${actif.nom} passe la case de ${surHeros.nom} (on ne peut pas s’y arrêter).`
+        : surMonstre ? 'Voile de brume : on traverse la case d’un monstre, mais on ne peut pas s’y arrêter.' : '');
     }
 
     // Raison de refuser un pas, en tenant compte des sorts de déplacement en cours.
@@ -661,7 +678,7 @@ const VuePlateau = (() => {
       if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       fenetreActions = null;
       modifier(e => { e.tour.deplacement = null; });
-      msg(`${actif.nom} s’arrête.`);
+      msg(`${actif.nom} s’arrête (${etat.tour.pas || 0} case${(etat.tour.pas || 0) > 1 ? 's' : ''} ce tour-ci).`);
     }
 
     function finDuTour() {
@@ -1067,9 +1084,9 @@ const VuePlateau = (() => {
       const h = herosActif();
       const p = etat.pieges.find(q => q.id === ev.piege);
       const au_dela = [p.x + ev.dir[0], p.y + ev.dir[1]];
-      const restant = etat.tour.deplacement?.restant || 0;
+      // Pas de limite de cases : le saut compte pour 2 cases au compteur, sans condition de reste.
       const libre = !Plateau.raisonBlocage(g, etat, p.x, p.y, ...au_dela) && !Plateau.autreHerosEn(etat, h.id, ...au_dela);
-      return { p, au_dela, possible: restant >= 2 && libre && !(p.type === 'bloc' && p.declenche), restant, libre };
+      return { p, au_dela, possible: libre && !(p.type === 'bloc' && p.declenche), restant: Infinity, libre };
     }
 
     function sauter(crane) {
@@ -1078,15 +1095,14 @@ const VuePlateau = (() => {
       if (!crane) {
         modifier(e => {
           const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = au_dela;
-          e.tour.deplacement.restant -= 2;
-          if (e.tour.deplacement.restant <= 0) e.tour.deplacement = null;
+          compterPas(e, ...au_dela, 2);
         });
         evenement = null;
         msg(`${h.nom} saute par-dessus le piège !`);
         return dessiner();
       }
       // Saut raté : le héros tombe sur le piège, qui se déclenche.
-      modifier(e => { const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y]; });
+      modifier(e => { const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y]; compterPas(e, p.x, p.y); });
       if (p.type === 'lance') { evenement = { genre: 'lance', piege: p.id, ambiance: Ambiance.tirer('piegeLance', { heros: h.nom }) }; return resoudreLance(true); }
       if (p.type === 'fosse' && p.declenche) {
         let vie;
@@ -1103,7 +1119,7 @@ const VuePlateau = (() => {
       const h = herosActif();
       const { p } = infosSaut(evenement);
       let vie;
-      modifier(e => { const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y]; vie = blesser(e, h.id, 1); finParPiege(e); });
+      modifier(e => { const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y]; compterPas(e, p.x, p.y); vie = blesser(e, h.id, 1); finParPiege(e); });
       evenement = { genre: 'fin', titre: 'Dans la fosse', ambiance: '', texte: `${h.nom} descend dans la fosse et perd 1 point de Vie (reste ${vie}). Son tour s’arrête.` };
       dessiner();
     }
@@ -1114,8 +1130,7 @@ const VuePlateau = (() => {
       const { p } = infosSaut(ev);
       modifier(e => {
         const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = [p.x, p.y];
-        e.tour.deplacement.restant -= 1;
-        if (e.tour.deplacement.restant <= 0) e.tour.deplacement = null;
+        compterPas(e, p.x, p.y);
       });
       declencherPiege(p.id, ev.depuis, ev.dir);
     }
@@ -1439,7 +1454,7 @@ const VuePlateau = (() => {
         return `${tete}<p class="titre-zargon">Piège connu : ${nom}</p>
           ${info.possible ? `<p class="question">Sauter par-dessus : 2 cases de déplacement. Lancez 1 dé de combat — il ne faut pas de crâne.</p>
               <div class="choix"><button data-saut="0" class="principal">Sauté (pas de crâne)</button><button data-saut="1">💀 Crâne</button></div>`
-            : `<p class="discret">${p.type === 'bloc' && p.declenche ? 'Un éboulement bloque le passage.' : `Pour sauter, il faut 2 cases de déplacement (il en reste ${info.restant}) et une case libre au-delà${info.libre ? '' : ' (elle ne l’est pas)'}.`}</p>`}
+            : `<p class="discret">${p.type === 'bloc' && p.declenche ? 'Un éboulement bloque le passage.' : `Pour sauter, il faut une case libre au-delà${info.libre ? '' : ' (elle ne l’est pas)'}.`}</p>`}
           <div class="choix">
             ${p.type === 'fosse' && p.declenche ? '<button id="ev-descendre">Descendre dans la fosse (1 point de Vie)</button>' : ''}
             ${!p.declenche ? '<button id="ev-marcher">Marcher dessus quand même</button>' : ''}
@@ -1876,21 +1891,12 @@ const VuePlateau = (() => {
         if (fenetreActions === 'sorts') {
           html = `${entete}<p class="titre-zargon">Sorts — ${echapperTexte(h.nom)}</p>${htmlSorts()}
             <div class="choix"><button id="md-retour-actions">Retour</button></div>`;
-        } else if (fenetreActions === 'des') {
-          html = `${entete}
-            <p class="question">${t.aBouge ? `⚠ ${h.nom} s’est déjà déplacé ce tour-ci. ` : ''}${h.ventVif ? 'Vent vif : lancez 4 dés rouges' : 'Lancez les 2 dés rouges'} : quel total ?</p>
-            <div class="choix nombres">${Array.from({ length: h.ventVif ? 21 : 11 }, (_, k) => k + (h.ventVif ? 4 : 2)).map(n => `<button data-total="${n}">${n}</button>`).join('')}</div>
-            <div class="choix"><button id="md-retour-actions">Retour</button></div>`;
         } else {
           html = `${entete}
-            <p class="etat-tour">Déplacement : ${t.deplacement ? `<strong>en cours (${t.deplacement.restant} case${t.deplacement.restant > 1 ? 's' : ''})</strong>` : t.aBouge ? 'fait' : 'disponible'}
+            <p class="etat-tour">Déplacement : ${t.deplacement ? '<strong>en cours</strong>' : t.aBouge ? 'fait' : 'disponible'}${t.pas ? ` (${t.pas} case${t.pas > 1 ? 's' : ''})` : ''}
               · Action : ${fait ? 'faite' : 'disponible'}</p>
-            <h3 class="titre-section">Déplacement</h3>
-            <div class="choix">
-              ${t.deplacement
-                ? '<button id="md-terminer-depl">Terminer le déplacement</button>'
-                : `<button id="md-deplacer" class="${t.aBouge ? '' : 'principal'}">${t.aBouge ? 'Se déplacer encore ⚠' : 'Se déplacer'}</button>`}
-            </div>
+            <p class="discret petit">Pour se déplacer : touchez ${echapperTexte(h.nom)} sur le plateau, puis les cases éclairées ; touchez-le à nouveau pour s’arrêter.</p>
+            ${t.deplacement ? '<div class="choix"><button id="md-terminer-depl">Arrêter le déplacement</button></div>' : ''}
             ${t.finForcee ? `<p class="erreur petit">⚠ Un piège a mis fin au tour de ${echapperTexte(h.nom)} : normalement, il ne fait plus rien ce tour-ci.</p>` : ''}
             ${h.passeTour ? `<p class="erreur petit">⚠ Tempête : ${echapperTexte(h.nom)} devrait passer ce tour.</p>` : ''}
             ${h.endormi ? `<p class="erreur petit">⚠ ${echapperTexte(h.nom)} est endormi : il ne bouge ni n’agit, sauf s’il fait un 6. <button id="md-reveil">Tenter de se réveiller</button></p>` : ''}
@@ -1920,7 +1926,6 @@ const VuePlateau = (() => {
       sur('#md-suivant', () => { conclusion = null; dessiner(); });
       sur('#md-annuler-combat', () => { combat = null; dessiner(); });
       sur('#md-fermer', () => { fenetreActions = null; dessiner(); });
-      sur('#md-deplacer', commencerDeplacement);
       sur('#md-retour-actions', () => { fenetreActions = 'menu'; msg(''); dessiner(); });
       sur('#md-terminer-depl', terminerDeplacement);
       sur('#md-attaquer', () => { fenetreActions = null; commencerAttaque(); });
@@ -1933,7 +1938,6 @@ const VuePlateau = (() => {
       sur('#md-fouille-pieges', () => { fenetreActions = null; fouiller('pieges'); });
       sur('#md-desamorcer', () => { fenetreActions = null; evenement = { genre: 'desarmer', piege: piegesDesamorcables()[0].id }; dessiner(); });
       sur('#md-fiche', () => { fenetreActions = null; dessiner(); ouvrirFiche(herosActif().id); });
-      boite.querySelectorAll('[data-total]').forEach(b => b.addEventListener('click', () => choisirTotal(+b.dataset.total)));
       boite.querySelectorAll('[data-cranes]').forEach(b => b.addEventListener('click', () => resoudreAttaque(+b.dataset.cranes)));
       boite.querySelectorAll('[data-blancs]').forEach(b => b.addEventListener('click', () => defendre(+b.dataset.blancs)));
       if (evenement) brancherEvenement(boite);
