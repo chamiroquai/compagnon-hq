@@ -847,6 +847,9 @@ const VuePlateau = (() => {
     }
 
     // Arrêter le déplacement avant d'avoir tout utilisé (permis par les règles).
+    // Règle (p. 12) : deux figurines peuvent partager la case de l'escalier ou une oubliette.
+    function casePartageable(h) { return surEscalier(h) || Plateau.fosseEn(etat, h.x, h.y); }
+
     // Héros dans le roc massif (À travers la pierre, carte 2021).
     function dansLeRoc(h) { return !!h && h.x != null && g.zones[Plateau.idx(L, h.x, h.y)] === '#'; }
     // S'arrêter dans le roc : emprisonné à jamais (confirmation). Renvoie true si le héros y reste.
@@ -865,7 +868,7 @@ const VuePlateau = (() => {
       const actif = herosActif();
       if (dansLeRoc(actif)) return emprisonnerDansLeRoc(actif);
       if (etat.monstres.some(m => m.x === actif.x && m.y === actif.y)) return msg('Voile de brume : on ne peut pas s’arrêter sur la case d’un monstre.');
-      const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
+      const autre = !casePartageable(actif) && Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
       if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       fenetreActions = null;
       modifier(e => { e.tour.deplacement = null; });
@@ -877,7 +880,7 @@ const VuePlateau = (() => {
       if (dansLeRoc(actif)) return emprisonnerDansLeRoc(actif);
       if (etat.monstres.some(m => m.x === actif.x && m.y === actif.y)) return msg('On ne peut pas s’arrêter sur la case d’un monstre : avancez encore.');
       if (etat.tour.deplacement) {
-        const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
+        const autre = !casePartageable(actif) && Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
         if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
       }
       fenetreActions = null; ciblage = false; djinnPorteChoix = false; djinnMonstreChoix = false; sortCible = null; combat = null; conclusion = null; evenement = null;
@@ -1395,15 +1398,36 @@ const VuePlateau = (() => {
     function infosSaut(ev) {
       const h = herosActif();
       const p = etat.pieges.find(q => q.id === ev.piege);
-      const au_dela = [p.x + ev.dir[0], p.y + ev.dir[1]];
+      const [dx, dy] = ev.dir;
+      const b = [p.x + dx, p.y + dy];
       // Pas de limite de cases : le saut compte pour 2 cases au compteur, sans condition de reste.
-      const libre = !Plateau.raisonBlocage(g, etat, p.x, p.y, ...au_dela) && !Plateau.autreHerosEn(etat, h.id, ...au_dela);
-      return { p, au_dela, possible: libre && !(p.type === 'bloc' && p.declenche), restant: Infinity, libre };
+      // Règle (p. 19) : jusqu'à trois cases d'atterrissage au-delà du piège (en face et les deux diagonales).
+      const passe = (ax, ay, bx, by) => bx >= 0 && by >= 0 && bx < L && by < H && g.zones[Plateau.idx(L, bx, by)] !== '#'
+        && Plateau.ouvert(g, etat, Plateau.idx(L, ax, ay), Plateau.idx(L, bx, by));
+      const pose = (x, y) => !Plateau.autreHerosEn(etat, h.id, x, y);
+      const options = [];
+      if (!Plateau.raisonBlocage(g, etat, p.x, p.y, ...b) && pose(...b)) options.push(b);
+      for (const s of [1, -1]) {
+        const [px, py] = [dy * s, dx * s];
+        const d = [b[0] + px, b[1] + py], cote = [p.x + px, p.y + py];
+        const parFace = passe(p.x, p.y, ...b) && !Plateau.raisonBlocage(g, etat, ...b, ...d);
+        const parCote = passe(p.x, p.y, ...cote) && !Plateau.raisonBlocage(g, etat, ...cote, ...d);
+        if ((parFace || parCote) && pose(...d)) options.push(d);
+      }
+      const libre = options.length > 0;
+      return { p, au_dela: options[0] || b, options, possible: libre && !(p.type === 'bloc' && p.declenche), restant: Infinity, libre };
     }
 
-    function sauter(crane) {
+    // « en haut à gauche », « à droite »… (position d'une case par rapport au piège, à l'écran).
+    function nomDirection(dx, dy) {
+      const v = dy < 0 ? 'en haut' : dy > 0 ? 'en bas' : '', hz = dx < 0 ? 'à gauche' : dx > 0 ? 'à droite' : '';
+      return [v, hz].filter(Boolean).join(' ');
+    }
+
+    function sauter(crane, choix = 0) {
       const h = herosActif(), ev = evenement;
-      const { p, au_dela } = infosSaut(ev);
+      const { p, options } = infosSaut(ev);
+      const au_dela = options[choix] || options[0];
       if (!crane) {
         modifier(e => {
           const k = e.heros.find(z => z.id === h.id); [k.x, k.y] = au_dela;
@@ -1548,7 +1572,12 @@ const VuePlateau = (() => {
        cherche un trésor que depuis une case voisine (sans diagonale) d'un coffre.
        Renvoie true si la pièce a un coffre et que le héros n'est contre aucun. */
     const estCoffre = m => m.type === 'coffre' || /coffre/i.test(m.nom || '');
+    // Une oubliette se fouille « comme une autre pièce » (règle p. 17).
+    const pieceFouille = h => (Plateau.fosseEn(etat, h.x, h.y) ? `fosse@${h.x},${h.y}` : Plateau.pieceDe(g, h.x, h.y));
+    const memeLieu = (piece, f) => (piece.startsWith('fosse@') ? `fosse@${f.x},${f.y}` === piece : Plateau.pieceDe(g, f.x, f.y) === piece);
+
     function coffreTropLoin(h) {
+      if (Plateau.fosseEn(etat, h.x, h.y)) return false;
       const piece = Plateau.pieceDe(g, h.x, h.y);
       if (!piece) return false;
       const coffres = (quete.mobilier || []).filter(m => estCoffre(m) && Plateau.pieceDe(g, m.x, m.y) === piece);
@@ -1558,13 +1587,13 @@ const VuePlateau = (() => {
 
     function fouillerTresor() {
       const h = herosActif();
-      const piece = Plateau.pieceDe(g, h.x, h.y);
-      if (!piece) return msg('Les trésors ne se trouvent que dans les pièces, pas dans les couloirs.');
+      const piece = pieceFouille(h);
+      if (!piece) return msg('Les trésors ne se trouvent que dans les pièces (ou au fond d’une oubliette), pas dans les couloirs.');
       // Règle maison bloquante (décision de l'utilisateur, exception au principe d'arbitrage).
       if (coffreTropLoin(h)) return msg(`Il y a un coffre dans cette pièce : ${h.nom} doit d’abord se placer sur une case voisine d’un coffre pour chercher un trésor.`);
       const avert = [];
       if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
-      if (etat.monstres.some(m => Plateau.pieceDe(g, m.x, m.y) === piece && etat.revele.includes(Plateau.idx(L, m.x, m.y))))
+      if (etat.monstres.some(m => memeLieu(piece, m) && etat.revele.includes(Plateau.idx(L, m.x, m.y))))
         avert.push('Un monstre est dans la pièce : la règle interdit de fouiller.');
       if ((etat.fouillesTresor[h.id] || []).includes(piece)) avert.push(`${h.nom} a déjà fouillé cette pièce (une fois par héros).`);
       const avertissement = avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '';
@@ -1675,9 +1704,11 @@ const VuePlateau = (() => {
     function monstreErrant(type = quete.monstreErrant) {
       if (!type) { evenement = { genre: 'choixErrant' }; return dessiner(); }
       const h = herosActif();
-      const c = Plateau.caseLibreProche(g, etat, h.x, h.y);
+      // Règle (p. 15) : à côté du héros, et il attaque aussitôt ; sinon au plus près, dans la même pièce
+      // (ou le même couloir), et il n'agira qu'au prochain tour de Zargon.
+      const c = Plateau.caseLibreProche(g, etat, h.x, h.y, true);
       const nom = infoMonstre(type).nom;
-      if (!c) return finCarte('Monstre errant', `Un ${nom} rôde, mais il n’y a aucune place pour lui. (Posez-le en vue MJ.)`, null);
+      if (!c) return finCarte('Monstre errant', `Un ${nom} rôde, mais il n’y a aucune place pour lui dans cette ${Plateau.pieceDe(g, h.x, h.y) ? 'pièce' : 'partie du couloir'}. Posez-le en vue MJ (touchez « MJ »), au plus près de ${h.nom}.`, null);
       const id = 'err' + Date.now();
       let m;
       modifier(e => {
@@ -1687,6 +1718,7 @@ const VuePlateau = (() => {
         e.monstres.push(m);
       });
       const ambiance = Ambiance.tirer('errant', { heros: h.nom, monstre: nom });
+      if (c[2] > 1) return finCarte('Monstre errant !', `${nom} surgit, mais aucune case n’est libre à côté de ${h.nom} : il apparaît au plus près et attaquera au prochain tour de Zargon.`, null);
       const att = caracMonstre(m, 'attaque');
       if (att === null) return finCarte('Monstre errant !', `${nom} surgit à côté de ${h.nom}. (Attaque inconnue : Réglages › Caractéristiques.)`, null);
       const tirage = Regles.lancer(att);
@@ -1802,8 +1834,10 @@ const VuePlateau = (() => {
         const nom = NOMS_PIEGES[p.type] + (p.declenche ? ' (ouverte)' : '');
         return `${tete}<p class="titre-zargon">Piège connu : ${nom}</p>
           ${info.possible ? `<p class="question">Sauter par-dessus : 2 cases de déplacement. Lancez 1 dé de combat — il ne faut pas de crâne.</p>
-              <div class="choix"><button data-saut="0" class="principal">Sauté (pas de crâne)</button><button data-saut="1">💀 Crâne</button></div>`
-            : `<p class="discret">${p.type === 'bloc' && p.declenche ? 'Un éboulement bloque le passage.' : `Pour sauter, il faut une case libre au-delà${info.libre ? '' : ' (elle ne l’est pas)'}.`}</p>`}
+              <div class="choix">${info.options.length > 1
+                ? info.options.map(([x, y], k) => `<button data-saut="0" data-atterrir="${k}" class="principal">Sauté : atterrir ${nomDirection(x - p.x, y - p.y)}</button>`).join('')
+                : '<button data-saut="0" class="principal">Sauté (pas de crâne)</button>'}<button data-saut="1">💀 Crâne</button></div>`
+            : `<p class="discret">${p.type === 'bloc' && p.declenche ? 'Un éboulement bloque le passage.' : 'Pour sauter, il faut une case libre au-delà du piège (en face ou en diagonale) : aucune ne l’est.'}</p>`}
           <div class="choix">
             ${p.type === 'fosse' && p.declenche ? '<button id="ev-descendre">Descendre dans la fosse (1 point de Vie)</button>' : ''}
             ${!p.declenche ? '<button id="ev-marcher">Marcher dessus quand même</button>' : ''}
@@ -1866,7 +1900,7 @@ const VuePlateau = (() => {
       boite.querySelectorAll('[data-lance]').forEach(b => b.addEventListener('click', () => resoudreLance(b.dataset.lance === '1')));
       boite.querySelectorAll('[data-bloc]').forEach(b => b.addEventListener('click', () => resoudreBloc(+b.dataset.bloc)));
       boite.querySelectorAll('[data-abri]').forEach(b => b.addEventListener('click', () => allerApresBloc(casesApresBloc(evenement)[+b.dataset.abri].c)));
-      boite.querySelectorAll('[data-saut]').forEach(b => b.addEventListener('click', () => sauter(b.dataset.saut === '1')));
+      boite.querySelectorAll('[data-saut]').forEach(b => b.addEventListener('click', () => sauter(b.dataset.saut === '1', +(b.dataset.atterrir || 0))));
       boite.querySelectorAll('[data-face]').forEach(b => b.addEventListener('click', () => resoudreDesamorcage(b.dataset.face)));
       sur('#ev-piocher', piocherVirtuelle);
       boite.querySelectorAll('[data-cible-sort]').forEach(b => b.addEventListener('click', () => {
@@ -2438,14 +2472,34 @@ const VuePlateau = (() => {
       const etaitActif = herosActif()?.id === hid;
       fenetreActions = null; evenement = null; ciblage = false; combat = null;
       const biens = (h.or || 0) > 0 || (h.inventaire || []).length > 0;
+      // Règle (p. 21, décision de l'utilisateur du 23/11/2026) : seuls les héros de la même pièce (ou du même
+      // couloir, en vue) peuvent ramasser ses biens ; sinon un monstre présent s'en empare et ils sont perdus.
+      const ici = h.x != null ? { x: h.x, y: h.y } : null;
+      const auMemeEndroit = f => {
+        if (!ici || f.x == null) return false;
+        const za = g.zones[Plateau.idx(L, ici.x, ici.y)], zb = g.zones[Plateau.idx(L, f.x, f.y)];
+        if (za !== zb || za === '#') return false;
+        return Plateau.estPiece(za) || Plateau.ligneDeVue(g, etat, ici.x, ici.y, f.x, f.y);
+      };
+      const heritiers = etat.heros.filter(k => k.id !== hid && debout(k) && auMemeEndroit(k)).map(k => k.id);
+      const voleur = biens && !heritiers.length ? etat.monstres.find(m => auMemeEndroit(m) && etat.revele.includes(Plateau.idx(L, m.x, m.y))) : null;
+      const butin = [h.or ? `${h.or} pièce${h.or > 1 ? 's' : ''} d’or` : '', ...(h.inventaire || []).map(o => o.nom)].filter(Boolean);
       // Posé avant modifier(), qui redessine l'écran.
-      heritage = biens && etat.heros.some(k => k.id !== hid && debout(k)) ? { heros: hid } : null;
+      heritage = biens && heritiers.length ? { heros: hid, heritiers } : null;
       modifier(e => {
         const z = e.heros.find(q => q.id === hid);
         z.mort = true; z.mortEn = { x: z.x, y: z.y }; z.x = null; z.y = null;
+        if (voleur) { z.or = 0; z.inventaire = []; }
         delete z.secoursReporte;
         if (etaitActif) passerAuSuivant(e);
       });
+      if (voleur) {
+        evenement = { genre: 'fin', titre: `☠ ${h.nom} est mort`, ambiance: '',
+          texte: `Aucun héros n’est là pour ramasser ses biens : ${infoMonstre(voleur.type).nom} s’en empare (${butin.join(', ')}). Ils sont perdus. `
+            + 'Si un artéfact était dans le lot, il revient dans le premier trésor trouvé à la quête suivante (règle des artéfacts perdus).' };
+        return dessiner();
+      }
+      if (biens && !heritiers.length) return msg(`☠ ${h.nom} est mort. Aucun héros n’est près de lui : ses biens restent avec lui.`);
       msg(`☠ ${h.nom} est mort.`);
     }
 
@@ -2481,7 +2535,8 @@ const VuePlateau = (() => {
         return `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, 0, h.corpsMax, 'vaincu')}</div>
           <p class="titre-zargon">☠ ${echapperTexte(h.nom)} est mort</p>
           <p class="resultat">Il laisse : ${echapperTexte(biens.join(', '))}. Qui les récupère ?</p>
-          <div class="choix">${etat.heros.filter(debout).map(k => `<button data-heritier="${k.id}">${echapperTexte(k.nom)}</button>`).join('')}
+          <p class="discret petit">Seuls les héros de la même pièce (ou du même couloir) peuvent les ramasser.</p>
+          <div class="choix">${etat.heros.filter(k => debout(k) && (!heritage.heritiers || heritage.heritiers.includes(k.id))).map(k => `<button data-heritier="${k.id}">${echapperTexte(k.nom)}</button>`).join('')}
             <button data-heritier="">Personne (ils restent avec lui)</button></div>`;
       }
       const h = secours();

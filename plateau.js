@@ -570,10 +570,12 @@ const Plateau = (() => {
 
   // Case libre la plus proche de (x, y), en avançant de case en case sans traverser les murs
   // (pour poser un monstre errant à côté du héros qui fouille).
-  function caseLibreProche(g, etat, x, y) {
+  // memeZone : rester dans la pièce (ou le couloir) de départ. Renvoie [x, y, distance en pas].
+  function caseLibreProche(g, etat, x, y, memeZone = false) {
     const depart = idx(g.L, x, y);
     const vus = new Set([depart]);
     const file = [depart];
+    const dist = new Map([[depart, 0]]);
     const occupee = c => {
       const cx = c % g.L, cy = Math.floor(c / g.L);
       return etat.heros.some(h => h.x === cx && h.y === cy) || etat.monstres.some(m => m.x === cx && m.y === cy)
@@ -583,8 +585,10 @@ const Plateau = (() => {
       const c = file.shift();
       for (const v of voisins(g, c)) {
         if (vus.has(v) || !ouvert(g, etat, c, v)) continue;
+        if (memeZone && g.zones[v] !== g.zones[depart]) continue;
         vus.add(v);
-        if (!occupee(v)) return [v % g.L, Math.floor(v / g.L)];
+        dist.set(v, dist.get(c) + 1);
+        if (!occupee(v)) return [v % g.L, Math.floor(v / g.L), dist.get(v)];
         file.push(v);
       }
     }
