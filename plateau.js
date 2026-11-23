@@ -232,9 +232,10 @@ const Plateau = (() => {
     return !p.secrete || etat.secretesTrouvees.includes(p.id);
   }
 
-  // Un héros est-il sur une des deux cases que la porte relie ? (écart n° 12)
-  function herosAdjacent(etat, p) {
-    return etat.heros.find(h => h.x != null && [p.a, p.b].some(([x, y]) => h.x === x && h.y === y));
+  // Le héros h est-il devant la porte, c.-à-d. sur une des deux cases qu'elle relie ?
+  // Une case en diagonale ne compte pas (écart n° 12, confirmé le 23/11/2026).
+  function devantPorte(h, p) {
+    return !!h && h.x != null && [p.a, p.b].some(([x, y]) => h.x === x && h.y === y);
   }
 
   /* ---------- Déplacement des héros ---------- */
@@ -724,6 +725,6 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
     passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
 })();

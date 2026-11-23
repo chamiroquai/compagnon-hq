@@ -171,7 +171,7 @@ const VuePlateau = (() => {
                   Touchez à nouveau le héros pour s’arrêter. Les numéros s’effacent à la fin du tour.</li>
               <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : bouton « Fiche » en haut pour le héros actif, ou touchez sa pastille dans l’ordre de jeu, ou le pion d’un autre héros.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
-              <li>Touchez une porte fermée pour l’ouvrir : un héros doit se trouver sur une case qui la touche. Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
+              <li>Touchez une porte fermée pour l’ouvrir : le héros actif doit se trouver devant elle (une case en diagonale ne suffit pas). Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
               <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on ne peut chercher le trésor que depuis une case voisine d’un coffre (le bouton reste grisé sinon).</li>
               <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
               <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Un passage secret (⇄) connu s’emprunte en un pas : quand le héros actif est dessus, l’application propose de l’emprunter (après « Pas maintenant », touchez le héros pour que la proposition revienne).</li>
@@ -910,7 +910,7 @@ const VuePlateau = (() => {
       if (!h || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || sortCible || combat || conclusion || evenement || secours() || heritage) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
-        [p.a, p.b].some(([x, y]) => x === h.x && y === h.y) &&
+        Plateau.devantPorte(h, p) &&
         !refusees.has(`${p.id}@${h.x},${h.y}`)) || null;
     }
 
@@ -918,7 +918,7 @@ const VuePlateau = (() => {
     function porteRefuseeIci(h) {
       const p = (quete.portes || []).find(q =>
         !etat.portesOuvertes.includes(q.id) && Plateau.porteVisible(etat, q) &&
-        [q.a, q.b].some(([x, y]) => x === h.x && y === h.y) && refusees.has(`${q.id}@${h.x},${h.y}`));
+        Plateau.devantPorte(h, q) && refusees.has(`${q.id}@${h.x},${h.y}`));
       return p ? `${p.id}@${h.x},${h.y}` : null;
     }
 
@@ -2686,8 +2686,10 @@ const VuePlateau = (() => {
         return msg('Cette porte est déjà ouverte.');
       }
       if (etat.portesOuvertes.includes(id)) return msg('Cette porte est déjà ouverte.');
-      const h = Plateau.herosAdjacent(etat, p);
-      if (!h) return msg('Un héros doit se trouver sur une case qui touche la porte. (Vue MJ pour passer outre.)');
+      // Seul le héros actif ouvre une porte, et seulement s'il est devant (pas en diagonale).
+      const h = herosActif();
+      if (!h) return msg('Une porte s’ouvre pendant le tour d’un héros. (Vue MJ pour passer outre.)');
+      if (!Plateau.devantPorte(h, p)) return msg(`${h.nom} doit se trouver devant la porte pour l’ouvrir (une case en diagonale ne suffit pas). (Vue MJ pour passer outre.)`);
       modifier(e => { e.portesOuvertes.push(id); });
       msg(`${h.nom} ouvre la porte.`);
     }
