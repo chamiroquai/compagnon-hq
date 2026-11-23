@@ -6,7 +6,11 @@
 
    Format : { format: 'compagnon-hq/symboles', versionFormat: 1, nom, creeLe,
               images: { cle: { donnees: 'data:image/webp;base64,…' (ou png, jpeg), l, h } } }
-   Clés reconnues : voir CLES ci-dessous ; une clé inconnue est ignorée. */
+   Clés reconnues : voir CLES ci-dessous ; une clé inconnue est ignorée.
+
+   Une QUÊTE peut aussi apporter ses images (v0.37.0) : racine « symboles » { cle: { donnees, l, h } },
+   même forme ; un monstre, un allié, un meuble ou un objet transportable y renvoie par « symbole: "cle" ».
+   Une clé standard (ex. « gobelin ») dans la quête remplace celle du fichier pour cette quête seulement. */
 'use strict';
 
 const Symboles = (() => {
@@ -26,6 +30,7 @@ const Symboles = (() => {
 
   let images = {};
   let actif = false;
+  let deQuete = {}; // images propres à la quête en cours (champ « symboles » du fichier de quête)
 
   // Pack enregistré (ou null) → symboles utilisés.
   function definir(pack) {
@@ -33,7 +38,17 @@ const Symboles = (() => {
     actif = !!pack && pack.actif !== false && Object.keys(images).length > 0;
   }
 
-  const image = cle => (actif && (images[cle] || images[ALIAS[cle]])) || null;
+  // Ordre : image de la quête (toujours utilisée), puis fichier de symboles (s'il est activé).
+  const image = cle => (cle && (deQuete[cle] || (actif && (images[cle] || images[ALIAS[cle]])))) || null;
+
+  /* Images d'une quête (v0.37.0) : { cle: { donnees, l, h } } ; null en quittant la quête. */
+  function definirQuete(imgs) { deQuete = imgs && typeof imgs === 'object' ? imgs : {}; }
+
+  // Image valable ? (même contrôle pour un fichier de symboles et pour une quête)
+  const imageValide = im => typeof im?.donnees === 'string' && /^data:image\/(webp|png|jpeg);base64,/.test(im.donnees)
+    && Number(im.l) > 0 && Number(im.h) > 0;
+  // Première clé disponible parmi celles proposées (ex. symbole propre, puis type).
+  const premiere = (...cles) => cles.find(c => c && image(c)) || null;
   const existe = cle => !!image(cle);
   const src = cle => image(cle)?.donnees || null;
 
@@ -45,8 +60,7 @@ const Symboles = (() => {
     if (!donnees.images || typeof donnees.images !== 'object') return { erreur: 'Le fichier ne contient aucune image.' };
     const gardees = {}, ignorees = [];
     for (const [cle, im] of Object.entries(donnees.images)) {
-      const ok = TOUTES.has(cle) && typeof im?.donnees === 'string' && /^data:image\/(webp|png|jpeg);base64,/.test(im.donnees)
-        && Number(im.l) > 0 && Number(im.h) > 0;
+      const ok = TOUTES.has(cle) && imageValide(im);
       if (ok) gardees[cle] = { donnees: im.donnees, l: Number(im.l), h: Number(im.h) };
       else ignorees.push(cle);
     }
@@ -81,5 +95,5 @@ const Symboles = (() => {
   const centrer = (parent, cle, cx, cy, taille, rotation = 0, classe = 'symbole') =>
     element(parent, cle, cx - taille / 2, cy - taille / 2, taille, taille, rotation, classe, 'xMidYMid meet');
 
-  return { FORMAT, CLES, definir, existe, src, valider, etirer, centrer, actif: () => actif };
+  return { FORMAT, CLES, definir, definirQuete, existe, src, premiere, imageValide, valider, etirer, centrer, actif: () => actif };
 })();

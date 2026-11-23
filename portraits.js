@@ -29,14 +29,17 @@ const Portraits = (() => {
   };
 
   // HTML du portrait : image personnelle si elle existe, sinon médaillon par défaut.
-  function heros(id, court) {
-    const img = personnalises.heros[id];
-    return img ? `<img src="${img}" alt="" class="portrait-img">` : medaillon(COULEURS_HEROS[id] || '#555', court, false, picto('heros', id, '#fff4dc'));
+  // « symbole » (facultatif) : clé d'une image de symboles.js (ex. allié d'une quête).
+  function heros(id, court, symbole) {
+    const propre = (symbole && Symboles.src(symbole)) || null;
+    const img = propre || personnalises.heros[id];
+    return img ? `<img src="${img}" alt="" class="portrait-img${propre ? ' medaillon-livre' : ''}">` : medaillon(COULEURS_HEROS[id] || '#555', court, false, picto('heros', id, '#fff4dc'));
   }
-  function monstre(type, court) {
-    const img = personnalises.monstres[type];
-    // Médaillon du livre (symboles.js) : image entière, sans recadrage en rond.
-    return img ? `<img src="${img}" alt="" class="portrait-img${personnalises.medaillons ? ' medaillon-livre' : ''}">` : medaillon('#2f3a24', court, true, picto('monstre', type, '#d6f5b0'));
+  function monstre(type, court, symbole) {
+    const propre = (symbole && Symboles.src(symbole)) || null;
+    const img = propre || personnalises.monstres[type] || Symboles.src(type);
+    // Symbole (fichier de symboles ou quête) : image entière, sans recadrage en rond.
+    return img ? `<img src="${img}" alt="" class="portrait-img${propre || personnalises.medaillons || !personnalises.monstres[type] ? ' medaillon-livre' : ''}">` : medaillon('#2f3a24', court, true, picto('monstre', type, '#d6f5b0'));
   }
 
   function definirPersonnalises(p) { personnalises = { heros: p?.heros || {}, monstres: p?.monstres || {}, medaillons: !!p?.medaillons }; }

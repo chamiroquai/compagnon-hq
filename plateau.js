@@ -909,6 +909,20 @@ const Plateau = (() => {
       if (a.recompense != null && !(Number.isInteger(a.recompense.or) && a.recompense.or >= 0)) err.push(`allié ${a.id} : « recompense.or » doit être un nombre entier positif`);
       if ((q.monstres || []).some(m => m.x === a.x && m.y === a.y)) err.push(`allié ${a.id} : case déjà occupée par un monstre`);
     }
+    // Images propres à la quête (v0.37.0) : racine « symboles » { cle: { donnees, l, h } } ;
+    // un monstre, allié, meuble ou objet transportable y renvoie par « symbole ».
+    if (q.symboles != null && (typeof q.symboles !== 'object' || Array.isArray(q.symboles))) err.push('symboles : doit être un objet { clé: image }');
+    const clesImages = new Set();
+    for (const [cle, im] of q.symboles && typeof q.symboles === 'object' && !Array.isArray(q.symboles) ? Object.entries(q.symboles) : []) {
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(cle)) err.push(`symboles : clé « ${cle} » invalide (lettres, chiffres, - et _ ; 40 caractères au plus)`);
+      else if (typeof Symboles !== 'undefined' && !Symboles.imageValide(im)) err.push(`symboles : image « ${cle} » invalide (data:image webp, png ou jpeg en base64, avec l et h)`);
+      else clesImages.add(cle);
+    }
+    const standard = typeof Symboles !== 'undefined' ? new Set(Object.values(Symboles.CLES).flat()) : new Set();
+    for (const [liste, quoi] of [[q.monstres, 'monstre'], [q.allies, 'allié'], [q.mobilier, 'meuble'], [q.transportables, 'objet transportable']])
+      for (const o of Array.isArray(liste) ? liste : [])
+        if (o.symbole != null && !clesImages.has(o.symbole) && !standard.has(o.symbole))
+          err.push(`${quoi} ${o.id || o.nom || ''} : symbole « ${o.symbole} » absent de « symboles »`);
     // Objets transportables (v0.35.0).
     if (q.transportables != null && !Array.isArray(q.transportables)) err.push('transportables : doit être une liste');
     for (const o of Array.isArray(q.transportables) ? q.transportables : []) {

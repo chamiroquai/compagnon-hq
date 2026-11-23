@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.36.0';
+const VERSION_APP = '0.37.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -62,6 +62,7 @@ function choisirOnglet(nom) {
 
 async function afficherParties() {
   document.body.classList.remove('mode-jeu');
+  Symboles.definirQuete(null); // les images propres à une quête ne servent que pendant celle-ci
   partieOuverte = null;
   choisirOnglet('parties');
   $('#titre-vue').textContent = 'Parties';

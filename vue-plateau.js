@@ -27,6 +27,8 @@ const VuePlateau = (() => {
      partie : la partie (avec .quete et .etat) ; enregistrer() : sauvegarde la partie. */
   /* options : { quitter() — retour à la liste des parties ; abandonner() — abandon de la quête } */
   function monter(conteneur, partie, enregistrer, options = {}) {
+    // Images propres à la quête (champ « symboles », v0.37.0) : allié, monstre spécial, meuble…
+    Symboles.definirQuete(partie.quete?.symboles || null);
     const quete = partie.quete;
     const g = Plateau.geometrie(quete);
     const { L, H } = g;
@@ -278,7 +280,7 @@ const VuePlateau = (() => {
         const id = 'allie-' + a.id;
         const court = a.nom.split(/\s+/).map(m => m[0]).join('').slice(0, 2).toUpperCase();
         const corps = a.corps || 2;
-        e.heros.push({ id, allie: a.id, escorte: escorte?.id || null, classe: 'allie', nom: a.nom, court,
+        e.heros.push({ id, allie: a.id, escorte: escorte?.id || null, classe: 'allie', nom: a.nom, court, symbole: a.symbole || null,
           x: a.x, y: a.y, corps, corpsMax: corps, attaque: 0, defense: a.defense || 2, or: 0, inventaire: [] });
         const pos = escorte ? ordre.indexOf(escorte.id) + 1 : ordre.length;
         ordre.splice(pos, 0, id);
@@ -405,13 +407,14 @@ const VuePlateau = (() => {
       for (const m of quete.mobilier || []) {
         if (!visible(Plateau.idx(L, m.x, m.y))) continue;
         const ml = m.l || 1, mh = m.h || 1;
-        const livre = Symboles.existe(m.type);
+        const cleM = Symboles.premiere(m.symbole, m.type);
+        const livre = !!cleM;
         const gr = el('g', { class: 'mobilier m-' + m.type + (livre ? ' livre' : '') }, svg);
         el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: ml * T - 8, height: mh * T - 8, rx: 3 }, gr);
         el('title', {}, gr).textContent = m.nom;
         // Symbole du livre (symboles.js) : étiré sur toute la surface du meuble ; un meuble plus haut
         // que large est tourné d'un quart de tour, sauf si la quête précise « rotation ».
-        if (livre) Symboles.etirer(gr, m.type, m.x * T + 2, m.y * T + 2, ml * T - 4, mh * T - 4, m.rotation ?? (mh > ml ? 90 : 0));
+        if (livre) Symboles.etirer(gr, cleM, m.x * T + 2, m.y * T + 2, ml * T - 4, mh * T - 4, m.rotation ?? (mh > ml ? 90 : 0));
         // Pictogramme centré ; sur un meuble allongé d'au moins 3 cases, le nom s'ajoute à côté.
         const avecNom = Icones.existe('meuble', m.type) && Math.max(ml, mh) >= 3 && Math.min(ml, mh) === 1;
         const taille = Math.min(ml, mh) * T * 0.75;
@@ -443,7 +446,9 @@ const VuePlateau = (() => {
         const gr = el('g', { class: 'objet-transport', 'data-objet': o.id }, svg);
         el('rect', { x: o.x * T + 6, y: o.y * T + 6, width: T - 12, height: T - 12, rx: 4 }, gr);
         el('title', {}, gr).textContent = o.nom;
-        if (!Icones.poser(gr, 'meuble', o.type || '', o.x * T + T / 2, o.y * T + T / 2, T * 0.6)) {
+        const cleO = Symboles.premiere(o.symbole, o.type);
+        if (cleO) Symboles.centrer(gr, cleO, o.x * T + T / 2, o.y * T + T / 2, T * 0.8);
+        else if (!Icones.poser(gr, 'meuble', o.type || '', o.x * T + T / 2, o.y * T + T / 2, T * 0.6)) {
           const t = el('text', { x: o.x * T + T / 2, y: o.y * T + T / 2 + 4, class: 'etiquette' }, gr);
           t.textContent = o.nom.slice(0, 3);
         }
@@ -554,12 +559,13 @@ const VuePlateau = (() => {
         // Pointillés : cible qu'une autre figurine interceptera (sort ou tir).
         const horsVueSort = (visableSort && !Sorts.sort(sortCible).partout && intercepte(herosActif(), m))
           || (ciblage && visableCible && intercepte(herosActif(), m));
-        const livreM = Symboles.existe(m.type);
+        const cleMonstre = Symboles.premiere(m.symbole, m.type);
+        const livreM = !!cleMonstre;
         const gr = el('g', { class: 'pion monstre' + (livreM ? ' livre' : '') + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : '') + (horsVueSort ? ' hors-vue' : ''), 'data-monstre': m.id }, svg);
         el('rect', { x: m.x * T + 3, y: m.y * T + 3, width: T - 6, height: T - 6, rx: 5 }, gr);
         el('title', {}, gr).textContent = m.nom || infoMonstre(m.type).nom;
         // Médaillon du livre : un peu plus grand que la case, les oreilles et cornes dépassent.
-        if (livreM) Symboles.centrer(gr, m.type, m.x * T + T / 2, m.y * T + T / 2, T * 1.12);
+        if (livreM) Symboles.centrer(gr, cleMonstre, m.x * T + T / 2, m.y * T + T / 2, T * 1.12);
         else if (!Icones.poser(gr, 'monstre', m.type, m.x * T + T / 2, m.y * T + T / 2, T - 9)) {
           const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
           t.textContent = infoMonstre(m.type).court;
@@ -608,7 +614,10 @@ const VuePlateau = (() => {
         if (cls.includes(' actif')) el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 1, class: 'anneau' }, gr);
         el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 3 }, gr);
         el('title', {}, gr).textContent = h.nom;
-        if (!Icones.poser(gr, 'heros', h.classe || h.id, h.x * T + T / 2, h.y * T + T / 2, T - 12)) {
+        // Image propre (allié de la quête, champ « symbole ») ; sinon pictogramme ; sinon initiales.
+        const cleH = Symboles.premiere(h.symbole);
+        if (cleH) Symboles.centrer(gr, cleH, h.x * T + T / 2, h.y * T + T / 2, T - 6);
+        else if (!Icones.poser(gr, 'heros', h.classe || h.id, h.x * T + T / 2, h.y * T + T / 2, T - 12)) {
           const t = el('text', { x: h.x * T + T / 2, y: h.y * T + T / 2 + 5 }, gr);
           t.textContent = h.court;
         }
@@ -2015,7 +2024,7 @@ const VuePlateau = (() => {
       const ev = evenement;
       // Un événement peut montrer une autre figurine que le héros actif (ex. un allié retrouvé).
       const f = (ev.figure && etat.heros.find(k => k.id === ev.figure)) || h;
-      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(f.id, f.court), f.nom, f.corps, f.corpsMax)}</div>`;
+      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(f.id, f.court, f.symbole), f.nom, f.corps, f.corpsMax)}</div>`;
       const amb = ev.ambiance ? `<p class="ambiance grande">${echapperTexte(ev.ambiance)}</p>` : '';
       if (ev.genre === 'fin') return `${tete}<p class="titre-zargon">${echapperTexte(ev.titre)}</p>${amb}
         ${ev.avertissement ? `<p class="erreur petit">${echapperTexte(ev.avertissement)}</p>` : ''}
@@ -2034,8 +2043,8 @@ const VuePlateau = (() => {
         const v = etat.heros.find(k => k.id === ev.heros);
         const n = caracHeros(h, 'attaque'), d = caracHeros(v, 'defense');
         const quoi = ev.mode === 'lancer' ? `« ${ev.arme} » lancée` : `Tir de « ${ev.arme} »`;
-        return `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
-            ${figurine('droite', Portraits.heros(v.id, v.court), v.nom, v.corps, v.corpsMax, 'defenseur')}</div>
+        return `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.heros(v.id, v.court, v.symbole), v.nom, v.corps, v.corpsMax, 'defenseur')}</div>
           <p class="titre-zargon">${echapperTexte(quoi)} : ${echapperTexte(v.nom)} est touché !</p>
           ${ev.intercept ? `<p class="erreur petit">${echapperTexte(ev.intercept)}</p>` : ''}
           ${ev.cranes == null
@@ -2092,8 +2101,8 @@ const VuePlateau = (() => {
         const m = etat.monstres.find(k => k.id === ev.monstre);
         const n = caracHeros(h, 'defense');
         return `<p class="titre-zargon">Monstre errant !</p>
-          <div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'defenseur')}<div class="centre">⚔</div>
-            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'attaquant')}</div>
+          <div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, h.corps, h.corpsMax, 'defenseur')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court, m.symbole), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'attaquant')}</div>
           ${amb}
           <p class="legende">Attaque de ${infoMonstre(m.type).nom}</p>
           ${htmlDes(ev.tirage, ev.cle)}
@@ -2508,7 +2517,7 @@ const VuePlateau = (() => {
         const nomM = infoMonstre(c.type).nom, court = infoMonstre(c.type).court;
         const vieM = mVivant ? mVivant.corps : c.vieMonstre ?? 0;
         const attH = c.genre === 'heros' ? ' attaquant' : ' defenseur', attM = c.genre === 'zargon' ? ' attaquant' : ' defenseur';
-        const gauche = figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, attH,
+        const gauche = figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, h.corps, h.corpsMax, attH,
           { vieAvant: c.genre === 'zargon' ? c.vieHerosAvant : null, classeApres: h.corps === 0 ? 'vaincu' : '' });
         const droite = figurine('droite', Portraits.monstre(c.type, court), nomM, vieM, mVivant?.corpsMax ?? c.vieMonstreMax, attM,
           { vieAvant: c.genre === 'heros' ? c.vieMonstreAvant : null, classeApres: vieM === 0 ? 'vaincu' : '' });
@@ -2539,8 +2548,8 @@ const VuePlateau = (() => {
         const h = herosActif();
         const m = etat.monstres.find(k => k.id === combat.monstre);
         const n = combat.des ?? caracHeros(h, 'attaque');
-        html = `${combat.djinn ? '<p class="titre-zargon">🌪 Le Djinn attaque !</p>' : ''}<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
-            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'defenseur')}</div>
+        html = `${combat.djinn ? '<p class="titre-zargon">🌪 Le Djinn attaque !</p>' : ''}<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court, m.symbole), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'defenseur')}</div>
           <p class="ambiance">${echapperTexte(combat.ambiance)}</p>
           ${combat.intercept ? `<p class="erreur petit">${echapperTexte(combat.intercept)}</p>` : ''}
           ${combat.mode && combat.mode !== 'contact' ? `<p class="mode-attaque">${echapperTexte(
@@ -2557,8 +2566,8 @@ const VuePlateau = (() => {
         const h = etat.heros.find(k => k.id === d.heros);
         const m = etat.monstres.find(k => k.id === d.monstre);
         const n = caracHeros(h, 'defense');
-        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'defenseur')}<div class="centre">⚔</div>
-            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'attaquant')}</div>
+        html = `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, h.corps, h.corpsMax, 'defenseur')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court, m.symbole), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'attaquant')}</div>
           <p class="legende">Attaque de ${infoMonstre(m.type).nom}</p>
           ${htmlDes(d.tirage || [], d.cle || 'ancien')}
           <div class="apres-des">
@@ -2577,7 +2586,7 @@ const VuePlateau = (() => {
         html = `<p class="titre-zargon">Tour de Zargon <span class="discret">· ${z.n + 1} / ${z.file.length}</span></p>
           ${z.n === 0 && z.debut ? `<p class="ambiance">${echapperTexte(z.debut)}</p>` : ''}
           ${p.erreur ? `<p class="erreur">${echapperTexte(decrirePlan())}</p>` : `
-            <div class="duel seul">${figurine('droite', cache ? Portraits.monstre('?', '?') : Portraits.monstre(m.type, infoMonstre(m.type).court), cache ? '???' : infoMonstre(m.type).nom, cache ? '?' : m.corps, cache ? null : m.corpsMax)}</div>
+            <div class="duel seul">${figurine('droite', cache ? Portraits.monstre('?', '?') : Portraits.monstre(m.type, infoMonstre(m.type).court, m.symbole), cache ? '???' : infoMonstre(m.type).nom, cache ? '?' : m.corps, cache ? null : m.corpsMax)}</div>
             <p class="ambiance grande">${echapperTexte(p.ambiance)}</p>
             ${p.statut ? `<p class="resultat">${echapperTexte(decrirePlan())}</p>` : ''}`}
           <div class="choix">
@@ -2596,7 +2605,7 @@ const VuePlateau = (() => {
         const desamorcables = piegesDesamorcables();
         const fait = (t.actions || 0) >= 1;
         const entete = `<button class="icone fermer-modale" id="md-fermer" aria-label="Fermer">✕</button>
-          <div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}</div>`;
+          <div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, h.corps, h.corpsMax)}</div>`;
         if (fenetreActions === 'sorts') {
           html = `${entete}<p class="titre-zargon">Sorts — ${echapperTexte(h.nom)}</p>${htmlSorts()}
             <div class="choix"><button id="md-retour-actions">Retour</button></div>`;
@@ -2782,7 +2791,7 @@ const VuePlateau = (() => {
       if (heritage) {
         const h = etat.heros.find(z => z.id === heritage.heros);
         const biens = [h.or ? `${h.or} pièce${h.or > 1 ? 's' : ''} d’or` : '', ...(h.inventaire || []).map(o => o.nom)].filter(Boolean);
-        return `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, 0, h.corpsMax, 'vaincu')}</div>
+        return `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, 0, h.corpsMax, 'vaincu')}</div>
           <p class="titre-zargon">☠ ${echapperTexte(h.nom)} est mort</p>
           <p class="resultat">Il laisse : ${echapperTexte(biens.join(', '))}. Qui les récupère ?</p>
           <p class="discret petit">Seuls les héros de la même pièce (ou du même couloir) peuvent les ramasser.</p>
@@ -2790,7 +2799,7 @@ const VuePlateau = (() => {
             <button data-heritier="">Personne (ils restent avec lui)</button></div>`;
       }
       const h = secours();
-      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, 0, h.corpsMax, 'vaincu')}</div>
+      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court, h.symbole), h.nom, 0, h.corpsMax, 'vaincu')}</div>
         <p class="titre-zargon">${echapperTexte(h.nom)} est à terre</p>`;
       if (potionInconnue) {
         const o = h.inventaire[potionInconnue.k];
