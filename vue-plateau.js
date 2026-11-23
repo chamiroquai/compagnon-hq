@@ -177,7 +177,7 @@ const VuePlateau = (() => {
               <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on ne peut chercher le trésor que depuis une case voisine d’un coffre (le bouton reste grisé sinon).</li>
               <li>Fouilles interdites (règle) : pas de fouille des pièges ni des portes secrètes si un monstre est en vue ; pas de fouille de trésor s’il y a un monstre dans la pièce. Les boutons sont alors grisés.</li>
               <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
-              <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Un passage secret (⇄) connu s’emprunte en un pas : quand le héros actif est dessus, l’application propose de l’emprunter (après « Pas maintenant », touchez le héros pour que la proposition revienne).</li>
+              <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Certains trésors révèlent eux aussi un passage ou une porte secrète quand on les trouve. Un passage secret (⇄) connu s’emprunte en un pas : quand le héros actif est dessus, l’application propose de l’emprunter (après « Pas maintenant », touchez le héros pour que la proposition revienne).</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
               <li>Allié à escorter (certaines quêtes) : une fois trouvé, il joue juste après le héros qui l’a trouvé. À son tour, lancez ses dés rouges, touchez son pion et déplacez-le ; il n’a pas d’action. Les monstres peuvent l’attaquer ; à 0 point de Vie, il meurt. Ramené vivant sur l’escalier, il rapporte sa récompense en fin de quête réussie.</li>
               <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
@@ -1227,6 +1227,7 @@ const VuePlateau = (() => {
       while (z.n < z.file.length) {
         const m = e.monstres.find(k => k.id === z.file[z.n]);
         if (!m) { z.n++; continue; }
+        if (Plateau.inerte(g, e, m)) { z.n++; continue; } // monstre inerte (v0.38.0) : il ne joue pas
         const nomM = infoMonstre(m.type).nom;
         if (m.passeTour) { z.plan = { monstre: m.id, statut: 'tempete', ambiance: `Une tornade enveloppe ${nomM} : il passe son tour.` }; return; }
         let reveil = '';
@@ -1494,7 +1495,10 @@ const VuePlateau = (() => {
       if (m.endormi) { nbDef = 0; noteSommeil = ` (${nom} dort : il ne se défend pas.)`; }
       const tirage = Regles.lancer(nbDef);
       const noirs = Regles.compter(tirage, 'noir');
-      const degats = Math.max(0, cranes - noirs);
+      // Monstre inerte (v0.38.0) : il ne peut pas encore être blessé.
+      const intouchable = Plateau.inerte(g, etat, m);
+      if (intouchable) noteSommeil += ` Les coups n’entament pas ${nom} : il ne peut pas être blessé pour l’instant.`;
+      const degats = intouchable ? 0 : Math.max(0, cranes - noirs);
       const vieAvant = m.corps ?? 1;
       const vieApres = Math.max(0, vieAvant - degats);
       const parSort = !!combat?.djinn;
@@ -1839,7 +1843,7 @@ const VuePlateau = (() => {
       const piegeants = (quete.mobilier || []).filter(m => m.piege && Plateau.pieceDe(g, m.x, m.y) === piece
         && !etat.piegesMobilier[m.id]?.desamorce && !etat.piegesMobilier[m.id]?.declenche);
       const degats = piegeants.reduce((t, m) => t + (m.piege.degats || 0), 0);
-      let tresor = null, vie;
+      let tresor = null, vie, revele = null;
       modifier(e => {
         if (e.tour.deplacement) e.tour.deplacement = null;
         e.tour.actions = (e.tour.actions || 0) + 1;
@@ -1857,6 +1861,8 @@ const VuePlateau = (() => {
           if (t.or) k.or = (k.or || 0) + t.or;
           for (const o of t.objets || []) (k.inventaire = k.inventaire || []).push({ nom: o });
           tresor = t;
+          // Trésor qui révèle des passages ou portes secrètes (v0.38.0).
+          if (Array.isArray(t.active)) revele = Plateau.activerCibles(g, e, t.active);
         }
       });
       if (piegeants.length) {
@@ -1865,7 +1871,9 @@ const VuePlateau = (() => {
             + (degats ? ` ${h.nom} perd ${degats} point${degats > 1 ? 's' : ''} de Vie (reste ${vie}).` : '') + ' Son tour s’arrête ; pas de trésor cette fois.' };
       } else if (tresor) {
         evenement = { genre: 'fin', titre: 'Trésor !', avertissement, ambiance: Ambiance.tirer('tresorTrouve', { heros: h.nom }),
-          texte: [tresor.texte, tresor.or ? `+${tresor.or} pièces d’or.` : '', (tresor.objets || []).length ? `Dans l’inventaire : ${tresor.objets.join(', ')}.` : ''].filter(Boolean).join(' ') };
+          texte: [tresor.texte, tresor.or ? `+${tresor.or} pièces d’or.` : '', (tresor.objets || []).length ? `Dans l’inventaire : ${tresor.objets.join(', ')}.` : '',
+            revele?.passages.length ? (revele.passages.length > 1 ? `${revele.passages.length} passages secrets s’ouvrent.` : 'Un passage secret s’ouvre.') : '',
+            revele?.portes.length ? (revele.portes.length > 1 ? `${revele.portes.length} portes secrètes apparaissent.` : 'Une porte secrète apparaît.') : ''].filter(Boolean).join(' ') };
       } else {
         evenement = { genre: 'pioche', avertissement };
       }
@@ -2341,6 +2349,8 @@ const VuePlateau = (() => {
       const m = etat.monstres.find(k => k.id === mid);
       const nom = infoMonstre(m.type).nom;
       let texte = '';
+      // Monstre inerte (v0.38.0) : il ne peut pas encore être blessé.
+      if (degats && Plateau.inerte(g, etat, m)) { degats = 0; texte = ` ${nom} n’est pas blessé : il ne peut pas l’être pour l’instant.`; }
       modifier(e => {
         avant?.(e);
         const k = e.monstres.find(z => z.id === mid);

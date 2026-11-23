@@ -309,6 +309,21 @@ const Plateau = (() => {
   //  - garde  : ne bouge jamais, attaque un héros qui vient à son contact ;
   //  - piece  : comme « chasse », sans jamais quitter la zone (pièce ou couloir) où la quête l'a placé.
   const COMPORTEMENTS = ['chasse', 'garde', 'piece'];
+
+  // Monstre inerte (v0.38.0) : champ « inerteJusqua » du monstre dans la quête (identifiant d'une
+  // porte, ou liste). Tant qu'aucune de ces portes n'est ouverte, il ne bouge pas, n'attaque pas
+  // et ne peut pas être blessé (ex. une gargouille qui passe pour une statue). Ensuite, il suit
+  // son comportement habituel.
+  function portesEveil(g, monstre) {
+    const q = (g.quete.monstres || []).find(k => k.id === monstre.id);
+    const v = q?.inerteJusqua;
+    return v == null ? [] : Array.isArray(v) ? v : [v];
+  }
+  function inerte(g, etat, monstre) {
+    const ids = portesEveil(g, monstre);
+    return ids.length > 0 && !ids.some(id => (etat.portesOuvertes || []).includes(id));
+  }
+
   function comportementDe(g, monstre) {
     const c = monstre.comportement || g.quete.comportementMonstres;
     return COMPORTEMENTS.includes(c) ? c : 'chasse';
@@ -401,6 +416,8 @@ const Plateau = (() => {
     const attaquables = c => vivants
       .filter(h => voisins(g, c).includes(idx(g.L, h.x, h.y)) && ouvert(g, etat, c, idx(g.L, h.x, h.y)));
 
+    // Monstre inerte : ni déplacement ni attaque.
+    if (inerte(g, etat, monstre)) return { chemin: [], cible: null, atteint: false };
     const comportement = comportementDe(g, monstre);
     // « garde » : ne bouge jamais ; attaque seulement au contact.
     if (comportement === 'garde') {
@@ -629,9 +646,10 @@ const Plateau = (() => {
      par un interrupteur ne se trouve pas par la fouille ; un passage libre se trouve par la
      fouille des portes secrètes, comme une porte. */
 
-  // Identifiants (passages et portes) commandés par un interrupteur de la quête.
+  // Identifiants (passages et portes) commandés par un interrupteur ou un trésor de la quête.
   function commandes(g) {
-    return new Set((g.quete.interrupteurs || []).flatMap(t => t.active || []));
+    return new Set([...(g.quete.interrupteurs || []).flatMap(t => t.active || []),
+      ...Object.values(g.quete.tresors || {}).flatMap(t => t?.active || [])]);
   }
   function passageConnu(etat, id) { return (etat.passagesTrouves || []).includes(id); }
   // Passage connu reliant (x, y) à (nx, ny), ou undefined.
@@ -671,9 +689,14 @@ const Plateau = (() => {
     const t = (g.quete.interrupteurs || []).find(k => k.id === id);
     etat.interrupteurs = etat.interrupteurs || {};
     etat.interrupteurs[id] = { ...etat.interrupteurs[id], trouve: true, active: true };
+    return activerCibles(g, etat, t?.active || []);
+  }
+  // Révèle les passages et portes secrètes donnés (interrupteur actionné, ou trésor trouvé :
+  // champ « active » d'un trésor, v0.38.0). Renvoie { passages, portes } : ce qui vient d'apparaître.
+  function activerCibles(g, etat, ids) {
     etat.passagesTrouves = etat.passagesTrouves || [];
     const res = { passages: [], portes: [] };
-    for (const cible of t?.active || []) {
+    for (const cible of ids) {
       if ((g.quete.passages || []).some(p => p.id === cible)) {
         if (!etat.passagesTrouves.includes(cible)) { etat.passagesTrouves.push(cible); res.passages.push(cible); }
       } else if ((g.quete.portes || []).some(p => p.id === cible && p.secrete)) {
@@ -899,6 +922,20 @@ const Plateau = (() => {
       if (t.active != null && !Array.isArray(t.active)) err.push(`interrupteur ${t.id} : « active » doit être une liste`);
       for (const c of Array.isArray(t.active) ? t.active : []) if (!cibles.has(c)) err.push(`interrupteur ${t.id} : « ${c} » n’est ni un passage ni une porte secrète`);
     }
+    // Trésor qui révèle des passages ou portes secrètes (v0.38.0).
+    for (const [piece, t] of Object.entries(q.tresors || {})) {
+      if (t?.active == null) continue;
+      if (!Array.isArray(t.active)) { err.push(`trésor ${piece} : « active » doit être une liste`); continue; }
+      for (const c of t.active) if (!cibles.has(c)) err.push(`trésor ${piece} : « ${c} » n’est ni un passage ni une porte secrète`);
+    }
+    // Monstre inerte (v0.38.0) : « inerteJusqua » = identifiant(s) de porte(s) de la quête.
+    const idsPortes = new Set((q.portes || []).map(p => p.id));
+    for (const m of q.monstres || []) {
+      if (m.inerteJusqua == null) continue;
+      const l = Array.isArray(m.inerteJusqua) ? m.inerteJusqua : [m.inerteJusqua];
+      if (!l.length) err.push(`monstre ${m.id} : « inerteJusqua » est vide`);
+      for (const c of l) if (!idsPortes.has(c)) err.push(`monstre ${m.id} : « inerteJusqua » : « ${c} » n’est pas une porte de la quête`);
+    }
     // Alliés à escorter (v0.33.0) : personnages à retrouver puis à ramener (ex. un prisonnier).
     for (const a of q.allies || []) {
       idUnique(a, 'allié');
@@ -984,5 +1021,5 @@ const Plateau = (() => {
   }
 
   return { verserRecompenses, objetsDe, objetsPortes, objetsAPortee, synchroniserObjets, etatObjets, bilanObjets, desPort, geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, planRepli, comportementDe, COMPORTEMENTS, ciblageDe, CIBLAGES, CIBLAGE_PAR_TYPE, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
-    passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
+    passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, activerCibles, inerte, HEROS };
 })();
