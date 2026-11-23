@@ -563,3 +563,46 @@ svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }
 .case-symboles { display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
 .case-symboles input { width: auto; }
 .ligne input[type="checkbox"] { flex: none; }
+
+/* Monstre vaincu (v0.39.1) : il reste visible pendant la fenêtre du combat,
+   puis s'évanouit à sa fermeture — fumée ou éclaboussures, au hasard. */
+.pion.monstre.disparu { pointer-events: none; }
+.pion.monstre.disparu.fumee, .pion.monstre.disparu.eclabousse,
+.effet-disparition circle, .effet-disparition ellipse { transform-box: fill-box; transform-origin: center; }
+.pion.monstre.disparu.fumee { animation: evanouir-fumee 1.1s ease-out forwards; }
+.pion.monstre.disparu.eclabousse { transform-origin: 50% 100%; animation: evanouir-eclabousse 0.8s ease-in forwards; }
+.effet-disparition { pointer-events: none; }
+.effet-disparition.fumee circle { fill: #8a8378; stroke: #d8d2c6; stroke-width: 1; opacity: 0; animation: bouffee 1.1s ease-out forwards; }
+.effet-disparition.eclabousse circle { fill: #8e1410; opacity: 0; animation: gouttelette 0.75s cubic-bezier(.2,.7,.4,1) forwards; }
+.effet-disparition.eclabousse .tache { fill: #6e0e0b; opacity: 0; animation: tache 1.1s ease-out forwards; }
+@keyframes evanouir-fumee {
+  0% { opacity: 1; transform: none; filter: none; }
+  45% { opacity: 0.55; transform: scale(1.06) translateY(-2px); filter: blur(1px); }
+  100% { opacity: 0; transform: scale(1.15) translateY(-6px); filter: blur(3px); }
+}
+@keyframes bouffee {
+  0% { opacity: 0; transform: scale(0.4); }
+  20% { opacity: 0.85; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(2.4); }
+}
+@keyframes evanouir-eclabousse {
+  0% { opacity: 1; transform: none; }
+  25% { opacity: 1; transform: scale(1.12, 0.82); }
+  100% { opacity: 0; transform: scale(1.3, 0.15); }
+}
+@keyframes gouttelette {
+  0% { opacity: 0; transform: none; }
+  12% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.6); }
+}
+@keyframes tache {
+  0% { opacity: 0; transform: scale(0.3); }
+  25% { opacity: 0.75; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pion.monstre.disparu.fumee, .pion.monstre.disparu.eclabousse { animation: evanouir-simple 0.6s linear forwards; }
+  .effet-disparition { display: none; }
+}
+@keyframes evanouir-simple { to { opacity: 0; } }

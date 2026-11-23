@@ -328,12 +328,67 @@ const VuePlateau = (() => {
       etat = JSON.parse(historique.pop());
       partie.etat = etat;
       selection = null; combat = null; conclusion = null; ciblage = false; djinnPorteChoix = false; djinnMonstreChoix = false; sortCible = null; fenetreActions = null; evenement = null; heritage = null; potionInconnue = null;
+      disparitions = [];
       enregistrer();
       msg('Action annulée.');
       dessiner();
       // Une fiche restée ouverte montre l'état rétabli.
       const fiche = conteneur.querySelector('#pl-fiche');
       if (fiche && !fiche.hidden && ficheHeros && etat.heros.some(k => k.id === ficheHeros)) ouvrirFiche(ficheHeros);
+    }
+
+    /* ---------- Monstres vaincus (v0.39.1) ----------
+       Un monstre vaincu reste sur le plateau tant que la fenêtre du combat (ou du sort) est
+       ouverte ; quand elle se ferme, il s'évanouit : nuage de fumée ou éclaboussures, au hasard.
+       Purement visuel : le monstre est déjà retiré de l'état de la partie. */
+    let disparitions = []; // { m : copie du monstre, effet : null (en attente) | 'fumee' | 'eclabousse', debut }
+    const DUREE_DISPARITION = 1100;
+    function monstreVaincu(m) { disparitions.push({ m: { ...m }, effet: null }); }
+    // Vérifié juste après le traitement en cours : le plateau est souvent redessiné
+    // avant que la fenêtre du combat ou du sort ne soit ouverte.
+    let verificationPrevue = false;
+    function lancerDisparitions() {
+      if (verificationPrevue || !disparitions.some(d => !d.effet)) return;
+      verificationPrevue = true;
+      setTimeout(() => { verificationPrevue = false; demarrerDisparitions(); }, 0);
+    }
+    function demarrerDisparitions() {
+      const prets = disparitions.filter(d => !d.effet);
+      if (!prets.length || conclusion || evenement || combat || animation) return;
+      const debut = performance.now();
+      prets.forEach(d => { d.effet = Math.random() < 0.5 ? 'fumee' : 'eclabousse'; d.debut = debut; });
+      dessiner();
+      setTimeout(() => {
+        disparitions = disparitions.filter(d => !prets.includes(d));
+        dessiner();
+      }, DUREE_DISPARITION);
+    }
+    // Particules de l'effet ; si le plateau est redessiné pendant l'effet, il reprend où il en était.
+    function effetDisparition(gr, d) {
+      const cx = d.m.x * T + T / 2, cy = d.m.y * T + T / 2;
+      const decalage = -Math.min(DUREE_DISPARITION, performance.now() - d.debut) + 'ms';
+      const gp = el('g', { class: 'effet-disparition ' + d.effet }, svg);
+      const animer = e => { e.style.animationDelay = decalage; return e; };
+      animer(gr);
+      // Graine fixe par monstre : mêmes particules à chaque redessin.
+      let graine = [...String(d.m.id)].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) >>> 0;
+      const hasard = () => ((graine = (graine * 1103515245 + 12345) >>> 0) % 1000) / 1000;
+      if (d.effet === 'fumee') {
+        for (let k = 0; k < 7; k++) {
+          const a = (k / 7) * Math.PI * 2 + hasard() * 0.6;
+          const c = animer(el('circle', { cx: cx + Math.cos(a) * T * 0.15, cy: cy + Math.sin(a) * T * 0.12, r: T * (0.16 + hasard() * 0.1) }, gp));
+          c.style.setProperty('--dx', (Math.cos(a) * T * 0.35).toFixed(1) + 'px');
+          c.style.setProperty('--dy', (Math.sin(a) * T * 0.2 - T * (0.35 + hasard() * 0.3)).toFixed(1) + 'px');
+        }
+      } else {
+        animer(el('ellipse', { class: 'tache', cx, cy: cy + T * 0.08, rx: T * 0.38, ry: T * 0.26 }, gp));
+        for (let k = 0; k < 10; k++) {
+          const a = (k / 10) * Math.PI * 2 + hasard() * 0.5, dist = T * (0.45 + hasard() * 0.4);
+          const c = animer(el('circle', { cx, cy, r: T * (0.07 + hasard() * 0.07) }, gp));
+          c.style.setProperty('--dx', (Math.cos(a) * dist).toFixed(1) + 'px');
+          c.style.setProperty('--dy', (Math.sin(a) * dist).toFixed(1) + 'px');
+        }
+      }
     }
 
     /* ---------- Dessin ---------- */
@@ -551,17 +606,10 @@ const VuePlateau = (() => {
       }
 
       // 6. Monstres (seulement sur les cases dévoilées)
-      for (const m of etat.monstres) {
-        if (!visible(Plateau.idx(L, m.x, m.y))) continue;
-        // Cibles entourées : monstres attaquables (attaque normale) ou tout monstre en vue (Djinn).
-        const visableSort = sortCible && !vueMJ && ciblesSort(sortCible).monstres.some(c => c.id === m.id);
-        const visableCible = (ciblage && ciblesAttaque().some(c => c.id === m.id)) || (djinnMonstreChoix && !vueMJ && vu.has(Plateau.idx(L, m.x, m.y))) || visableSort;
-        // Pointillés : cible qu'une autre figurine interceptera (sort ou tir).
-        const horsVueSort = (visableSort && !Sorts.sort(sortCible).partout && intercepte(herosActif(), m))
-          || (ciblage && visableCible && intercepte(herosActif(), m));
+      const poserMonstre = (m, classes, attrs = {}) => {
         const cleMonstre = Symboles.premiere(m.symbole, m.type);
         const livreM = !!cleMonstre;
-        const gr = el('g', { class: 'pion monstre' + (livreM ? ' livre' : '') + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : '') + (horsVueSort ? ' hors-vue' : ''), 'data-monstre': m.id }, svg);
+        const gr = el('g', { class: 'pion monstre' + (livreM ? ' livre' : '') + classes, ...attrs }, svg);
         el('rect', { x: m.x * T + 3, y: m.y * T + 3, width: T - 6, height: T - 6, rx: 5 }, gr);
         el('title', {}, gr).textContent = m.nom || infoMonstre(m.type).nom;
         // Médaillon du livre : un peu plus grand que la case, les oreilles et cornes dépassent.
@@ -570,6 +618,23 @@ const VuePlateau = (() => {
           const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
           t.textContent = infoMonstre(m.type).court;
         }
+        return gr;
+      };
+      for (const m of etat.monstres) {
+        if (!visible(Plateau.idx(L, m.x, m.y))) continue;
+        // Cibles entourées : monstres attaquables (attaque normale) ou tout monstre en vue (Djinn).
+        const visableSort = sortCible && !vueMJ && ciblesSort(sortCible).monstres.some(c => c.id === m.id);
+        const visableCible = (ciblage && ciblesAttaque().some(c => c.id === m.id)) || (djinnMonstreChoix && !vueMJ && vu.has(Plateau.idx(L, m.x, m.y))) || visableSort;
+        // Pointillés : cible qu'une autre figurine interceptera (sort ou tir).
+        const horsVueSort = (visableSort && !Sorts.sort(sortCible).partout && intercepte(herosActif(), m))
+          || (ciblage && visableCible && intercepte(herosActif(), m));
+        poserMonstre(m, (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : '') + (horsVueSort ? ' hors-vue' : ''), { 'data-monstre': m.id });
+      }
+      // 6. bis Monstres vaincus : encore là pendant la fenêtre de combat, puis ils s'évanouissent.
+      for (const d of disparitions) {
+        if (!visible(Plateau.idx(L, d.m.x, d.m.y))) continue;
+        const gr = poserMonstre(d.m, ' disparu' + (d.effet ? ' ' + d.effet : ''));
+        if (d.effet) effetDisparition(gr, d);
       }
 
       // 6 bis. Tour de Zargon : trajet prévu du monstre en cours (cases visibles seulement)
@@ -701,6 +766,7 @@ const VuePlateau = (() => {
       dessinerTour();
       dessinerInvite();
       dessinerModale();
+      lancerDisparitions();
       conteneur.querySelector('#pl-annuler').disabled = historique.length === 0;
       const bMJ = conteneur.querySelector('#pl-mj');
       bMJ.classList.toggle('actif', vueMJ);
@@ -1517,7 +1583,7 @@ const VuePlateau = (() => {
         }
         const k = e.monstres.find(z => z.id === m.id);
         k.corps = vieApres;
-        if (vieApres === 0) e.monstres = e.monstres.filter(z => z.id !== m.id);
+        if (vieApres === 0) { monstreVaincu(k); e.monstres = e.monstres.filter(z => z.id !== m.id); }
       });
       const valeurs = { heros: h.nom, monstre: nom, type: m.type };
       conclusion = {
@@ -2355,7 +2421,7 @@ const VuePlateau = (() => {
         avant?.(e);
         const k = e.monstres.find(z => z.id === mid);
         k.corps = Math.max(0, (k.corps ?? 1) - degats);
-        if (k.corps === 0) { e.monstres = e.monstres.filter(z => z.id !== mid); texte = ` ${nom} est vaincu ! ${Ambiance.tirer('mort', { monstre: nom, heros: h.nom, type: m.type })}`; }
+        if (k.corps === 0) { monstreVaincu(k); e.monstres = e.monstres.filter(z => z.id !== mid); texte = ` ${nom} est vaincu ! ${Ambiance.tirer('mort', { monstre: nom, heros: h.nom, type: m.type })}`; }
         else if (degats) texte = ` ${nom} : ${k.corps} point${k.corps > 1 ? 's' : ''} de Vie restant${k.corps > 1 ? 's' : ''}.`;
       });
       return texte;
