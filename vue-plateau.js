@@ -1706,9 +1706,10 @@ const VuePlateau = (() => {
       const h = herosActif();
       // Règle (p. 15) : à côté du héros, et il attaque aussitôt ; sinon au plus près, dans la même pièce
       // (ou le même couloir), et il n'agira qu'au prochain tour de Zargon.
-      const c = Plateau.caseLibreProche(g, etat, h.x, h.y, true);
+      // Aucune place dans la pièce : au plus près au-delà (sans renvoyer les joueurs en vue MJ, pour ne rien dévoiler).
+      const c = Plateau.caseLibreProche(g, etat, h.x, h.y, true) || Plateau.caseLibreProche(g, etat, h.x, h.y);
       const nom = infoMonstre(type).nom;
-      if (!c) return finCarte('Monstre errant', `Un ${nom} rôde, mais il n’y a aucune place pour lui dans cette ${Plateau.pieceDe(g, h.x, h.y) ? 'pièce' : 'partie du couloir'}. Posez-le en vue MJ (touchez « MJ »), au plus près de ${h.nom}.`, null);
+      if (!c) return finCarte('Monstre errant', `Un ${nom} rôde, mais il ne trouve aucune place pour surgir.`, null);
       const id = 'err' + Date.now();
       let m;
       modifier(e => {
