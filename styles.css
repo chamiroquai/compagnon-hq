@@ -434,6 +434,12 @@ svg .icone { pointer-events: none; overflow: visible; }
 .heros .icone { color: #fff6e0; }
 .monstre .icone { color: #c8f0a0; }
 .mobilier .icone { color: #f1e2c4; opacity: 0.9; }
+/* Objets transportables (v0.35.0) : au sol, et porté par un héros */
+.objet-transport rect { fill: #b8862b; stroke: #4a3008; stroke-width: 2; }
+.objet-transport .icone, .objet-porte .icone { color: #2a1a0e; }
+.objet-transport .etiquette { fill: #2a1a0e; }
+.objet-porte circle { fill: #e2b24a; stroke: #2a1a0e; stroke-width: 1.5; }
+.objet-porte text { font-size: 10px; text-anchor: middle; fill: #2a1a0e; font-weight: bold; }
 .escalier .icone { color: #2b2620; }
 .piege .icone { color: #ffd76a; }
 .piege.cache .icone { color: #ff8a7a; }

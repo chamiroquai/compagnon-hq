@@ -103,6 +103,15 @@ const QUETE_DEMO = {
   // un passage ou frappe le plus fort), « tactique » (sorcier de la Terreur : lanceur de sorts,
   // porteur d'un objet clé, héros qui tient l'entrée de sa pièce ou héros isolé).
   // Valeur pour toute la quête : « ciblageMonstres » ; objets clés : « objetsCles » (noms).
+  // Objets transportables (facultatif, v0.35.0) : « transportables » = liste de
+  // { id, nom, x, y, type (pictogramme de meuble, facultatif ; sinon les 3 premières lettres),
+  // deplacementDes (seulement si la quête ralentit le porteur : nombre de dés rouges ; 0 = immobile ;
+  // absent = déplacement normal), aRapporter (vrai par défaut) }. Seuls ces objets se portent :
+  // les meubles (coffres compris) restent fixes.
+  // Un héros prend un objet sur sa case ou une case voisine (un seul à la fois), le pose où il est.
+  // « recompenseObjets » : { or } partagé en fin de quête réussie si tous les objets à rapporter
+  // sont sur l'escalier. Un objet porté dont le nom figure dans « objetsCles » attire les monstres
+  // au ciblage « tactique ».
   monstres: [
     { id: 'mo1', type: 'gobelin', x: 3, y: 2 },
     { id: 'mo2', type: 'orque', x: 9, y: 2 },

@@ -351,7 +351,9 @@ const Plateau = (() => {
     const malProtege = Number.isFinite(inf.defense) && defenses.length > 1 && inf.defense === Math.min(...defenses);
     const lanceur = ((etat.sorts || {})[h.id] || []).some(s => !s.utilise);
     const cles = (g.quete.objetsCles || []).map(n => String(n).toLowerCase());
-    const porteCle = cles.length > 0 && (h.inventaire || []).some(o => cles.some(n => String(o.nom || '').toLowerCase().includes(n)));
+    const porteNom = nom => cles.some(n => String(nom || '').toLowerCase().includes(n));
+    const porteCle = cles.length > 0 && ((h.inventaire || []).some(o => porteNom(o.nom))
+      || objetsPortes(g.quete, etat, h.id).some(o => porteNom(o.nom)));
     // Sur une case d'une porte ouverte : il bloque un passage ; si c'est une porte de la
     // pièce où se trouve le monstre, il en tient l'entrée.
     const portes = (g.quete.portes || []).filter(p => (!p.secrete || (etat.secretesTrouvees || []).includes(p.id))
@@ -762,6 +764,7 @@ const Plateau = (() => {
       secretesTrouvees: [],
       passagesTrouves: [],  // passages secrets connus
       interrupteurs: {},    // id → { trouve, active }
+      objets: objetsInitiaux(quete), // objets transportables : position et porteur
       revele: [],
       penombre: {},
     };
@@ -775,6 +778,63 @@ const Plateau = (() => {
     }
     devoiler(geometrie(quete), etat, portee);
     return etat;
+  }
+
+  /* ---------- Objets transportables (v0.35.0) ----------
+     Objet de quête qu'un héros ramasse et porte (ex. un coffre à rapporter). Au sol, il est
+     dessiné sur sa case (caché tant que la case n'est pas dévoilée) et ne bloque pas le passage.
+     Porté, il suit son porteur ; si le porteur meurt, l'objet tombe sur sa case.
+     Rien de tout cela ne vaut pour les meubles ordinaires : seuls les objets que la quête
+     déclare dans « transportables » se portent. Le ralentissement n'existe que si la quête
+     le précise (« deplacementDes ») ; sans ce champ, le porteur se déplace normalement. */
+  const objetsInitiaux = q => (q.transportables || []).map(o => ({ id: o.id, x: o.x, y: o.y, porteur: null }));
+  // État des objets ; les parties commencées avant la v0.35.0 n'en ont pas : on le crée.
+  function etatObjets(q, etat) {
+    if (!Array.isArray(etat.objets)) etat.objets = objetsInitiaux(q);
+    return etat.objets;
+  }
+  // Description de l'objet (quête) fusionnée avec son état (partie) ; un objet porté
+  // est à la position de son porteur.
+  function objetsDe(q, etat) {
+    return etatObjets(q, etat).map(s => {
+      const o = { ...(q.transportables || []).find(k => k.id === s.id), ...s };
+      const h = s.porteur && etat.heros.find(k => k.id === s.porteur);
+      if (h && !h.mort && h.x != null) { o.x = h.x; o.y = h.y; }
+      return o;
+    }).filter(o => o.nom);
+  }
+  const objetsPortes = (q, etat, hid) => objetsDe(q, etat).filter(o => o.porteur === hid);
+  const desPort = o => (Number.isInteger(o.deplacementDes) ? o.deplacementDes : null);
+  // Un objet porté suit son porteur ; porteur mort ou retiré du plateau : l'objet reste à terre
+  // sur sa dernière case connue (case où il est mort, sinon dernière position).
+  function synchroniserObjets(q, etat) {
+    for (const s of etatObjets(q, etat)) {
+      if (!s.porteur) continue;
+      const h = etat.heros.find(k => k.id === s.porteur);
+      if (h && !h.mort && h.x != null) { s.x = h.x; s.y = h.y; continue; }
+      if (h?.mortEn?.x != null) { s.x = h.mortEn.x; s.y = h.mortEn.y; }
+      s.porteur = null;
+    }
+  }
+  // Objets au sol que le héros peut ramasser : sur sa case, ou sur une case voisine
+  // (sans diagonale) sans mur ni porte fermée entre les deux.
+  function objetsAPortee(g, etat, h) {
+    if (!h || h.x == null) return [];
+    const i = idx(g.L, h.x, h.y);
+    return objetsDe(g.quete, etat).filter(o => {
+      if (o.porteur || o.x == null) return false;
+      const d = Math.abs(o.x - h.x) + Math.abs(o.y - h.y);
+      return d === 0 || (d === 1 && ouvert(g, etat, i, idx(g.L, o.x, o.y)));
+    });
+  }
+  function surEscalierQ(q, x, y) {
+    const s = q.escalier;
+    return !!s && x != null && x >= s.x && x <= s.x + 1 && y >= s.y && y <= s.y + 1;
+  }
+  // Objets à rapporter à l'escalier (« aRapporter » vaut vrai par défaut) et ceux qui y sont.
+  function bilanObjets(q, etat) {
+    const aRapporter = objetsDe(q, etat).filter(o => o.aRapporter !== false);
+    return { aRapporter, rapportes: aRapporter.filter(o => surEscalierQ(q, o.x, o.y)) };
   }
 
   /* ---------- Vérification d'une quête (pour les imports) ---------- */
@@ -849,6 +909,20 @@ const Plateau = (() => {
       if (a.recompense != null && !(Number.isInteger(a.recompense.or) && a.recompense.or >= 0)) err.push(`allié ${a.id} : « recompense.or » doit être un nombre entier positif`);
       if ((q.monstres || []).some(m => m.x === a.x && m.y === a.y)) err.push(`allié ${a.id} : case déjà occupée par un monstre`);
     }
+    // Objets transportables (v0.35.0).
+    if (q.transportables != null && !Array.isArray(q.transportables)) err.push('transportables : doit être une liste');
+    for (const o of Array.isArray(q.transportables) ? q.transportables : []) {
+      idUnique(o, 'objet transportable');
+      if (!o.nom) err.push(`objet ${o.id} : nom manquant`);
+      if (!libre(o.x, o.y)) err.push(`objet ${o.id} : case hors du plateau ou dans la roche`);
+      if (o.deplacementDes != null && !(Number.isInteger(o.deplacementDes) && o.deplacementDes >= 0 && o.deplacementDes <= 12)) err.push(`objet ${o.id} : « deplacementDes » doit être un nombre entier entre 0 et 12`);
+      if (o.aRapporter != null && typeof o.aRapporter !== 'boolean') err.push(`objet ${o.id} : « aRapporter » doit valoir true ou false`);
+    }
+    if (q.recompenseObjets != null) {
+      if (!(Number.isInteger(q.recompenseObjets.or) && q.recompenseObjets.or >= 0)) err.push('recompenseObjets : « or » doit être un nombre entier positif');
+      if (!(q.transportables || []).some(o => o.aRapporter !== false)) err.push('recompenseObjets : aucun objet transportable à rapporter');
+      if (!q.escalier) err.push('recompenseObjets : il faut un escalier où rapporter les objets');
+    }
     if (q.escalier) {
       const { x, y } = q.escalier;
       if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([dx, dy]) => libre(x + dx, y + dy))) err.push('escalier : ses 2 × 2 cases doivent être sur le plateau, hors de la roche');
@@ -879,9 +953,22 @@ const Plateau = (() => {
       heros.forEach((k, n) => { k.or = (k.or || 0) + part + (n === 0 ? reste : 0); });
       phrases.push(`Sauvetage de ${a.nom} réussi : ${or} pièces d’or partagées (${part} chacun${reste ? `, ${reste} de plus pour ${heros[0].nom}` : ''}).`);
     }
+    // Objets à rapporter (v0.35.0) : la récompense n'est versée que si tous sont sur l'escalier.
+    const ro = q.recompenseObjets?.or || 0;
+    if (ro && !etat.recompenseObjetsVersee) {
+      const { aRapporter, rapportes } = bilanObjets(q, etat);
+      if (rapportes.length < aRapporter.length) {
+        phrases.push(`Objets rapportés : ${rapportes.length} sur ${aRapporter.length}, pas de récompense.`);
+      } else if (heros.length) {
+        etat.recompenseObjetsVersee = true;
+        const part = Math.floor(ro / heros.length), reste = ro - part * heros.length;
+        heros.forEach((k, n) => { k.or = (k.or || 0) + part + (n === 0 ? reste : 0); });
+        phrases.push(`Tout est rapporté : ${ro} pièces d’or partagées (${part} chacun${reste ? `, ${reste} de plus pour ${heros[0].nom}` : ''}).`);
+      }
+    }
     return phrases;
   }
 
-  return { verserRecompenses, geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, planRepli, comportementDe, COMPORTEMENTS, ciblageDe, CIBLAGES, CIBLAGE_PAR_TYPE, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
+  return { verserRecompenses, objetsDe, objetsPortes, objetsAPortee, synchroniserObjets, etatObjets, bilanObjets, desPort, geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, planRepli, comportementDe, COMPORTEMENTS, ciblageDe, CIBLAGES, CIBLAGE_PAR_TYPE, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
     passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
 })();

@@ -237,6 +237,7 @@ const VuePlateau = (() => {
       historique.push(avant);
       if (historique.length > 60) historique.shift();
       Plateau.devoiler(g, etat, Plateau.porteeDe(partie.reglages));
+      Plateau.synchroniserObjets(quete, etat);
       const trouves = decouvrirAllies(etat);
       const tombes = mortsAllies(etat);
       // Courage prend fin quand plus aucun monstre n'est en vue.
@@ -409,6 +410,18 @@ const VuePlateau = (() => {
         }
       }
 
+      // 3 quater. Objets transportables posés au sol (v0.35.0) : pictogramme, ou trois lettres du nom.
+      for (const o of Plateau.objetsDe(quete, etat)) {
+        if (o.porteur || o.x == null || !visible(Plateau.idx(L, o.x, o.y))) continue;
+        const gr = el('g', { class: 'objet-transport', 'data-objet': o.id }, svg);
+        el('rect', { x: o.x * T + 6, y: o.y * T + 6, width: T - 12, height: T - 12, rx: 4 }, gr);
+        el('title', {}, gr).textContent = o.nom;
+        if (!Icones.poser(gr, 'meuble', o.type || '', o.x * T + T / 2, o.y * T + T / 2, T * 0.6)) {
+          const t = el('text', { x: o.x * T + T / 2, y: o.y * T + T / 2 + 4, class: 'etiquette' }, gr);
+          t.textContent = o.nom.slice(0, 3);
+        }
+      }
+
       // 3 bis. Pièges : connus (repérés ou déclenchés) ; en vue MJ, aussi les pièges cachés.
       const SYMBOLES_PIEGES = { fosse: '◎', bloc: '▦', lance: '↟' };
       for (const p of etat.pieges || []) {
@@ -556,6 +569,17 @@ const VuePlateau = (() => {
           const t = el('text', { x: h.x * T + T / 2, y: h.y * T + T / 2 + 5 }, gr);
           t.textContent = h.court;
         }
+      }
+
+      // 8 ter. Objet porté : petit médaillon dans le coin du pion de son porteur.
+      for (const o of Plateau.objetsDe(quete, etat)) {
+        const h = o.porteur && etat.heros.find(k => k.id === o.porteur);
+        if (!h || h.x == null) continue;
+        const gr = el('g', { class: 'objet-porte' }, svg);
+        const cx = h.x * T + T - 9, cy = h.y * T + T - 9;
+        el('circle', { cx, cy, r: 8 }, gr);
+        el('title', {}, gr).textContent = `${h.nom} porte ${o.nom}`;
+        if (!Icones.poser(gr, 'meuble', o.type || '', cx, cy, 12)) el('text', { x: cx, y: cy + 3 }, gr).textContent = o.nom[0];
       }
 
       // 8 bis. Zones tactiles des portes, au-dessus des pions : un héros posé
@@ -841,6 +865,8 @@ const VuePlateau = (() => {
       if (etat.tour.aBouge) avert.push(`⚠ ${actif.nom} s’est déjà déplacé ce tour-ci (règle : un seul déplacement par tour).`);
       if (actif.endormi) avert.push(`⚠ ${actif.nom} est endormi.`);
       if (actif.passeTour) avert.push(`⚠ Tornade : ${actif.nom} devrait passer ce tour.`);
+      const charge = rappelCharge(actif);
+      if (charge) avert.push(charge);
       modifier(e => {
         const k = e.heros.find(z => z.id === actif.id);
         // Sorts « au prochain déplacement » : ils s'appliquent à ce déplacement, puis disparaissent.
@@ -850,6 +876,33 @@ const VuePlateau = (() => {
         e.tour.aBouge = true;
       });
       msg(...avert, `${actif.nom} se déplace : touchez les cases éclairées. Touchez ${actif.nom} pour s’arrêter.`);
+    }
+
+    /* Objets transportables (v0.35.0) : prendre et poser ne coûtent ni le déplacement ni l'action. */
+    // Rappel : un héros chargé lance moins de dés rouges (les joueurs comptent eux-mêmes).
+    function rappelCharge(h) {
+      const portes = Plateau.objetsPortes(quete, etat, h.id).filter(o => Plateau.desPort(o) != null);
+      if (!portes.length) return '';
+      const n = Math.min(...portes.map(Plateau.desPort));
+      const noms = portes.map(o => o.nom).join(', ');
+      return n === 0 ? `⚠ ${h.nom} porte ${noms} : il ne peut pas se déplacer.`
+        : `⚠ ${h.nom} porte ${noms} : lancez seulement ${n} dé${n > 1 ? 's' : ''} rouge${n > 1 ? 's' : ''}.`;
+    }
+    const UN_OBJET_PAR_HEROS = 1;
+    function prendreObjet(oid) {
+      const h = herosActif();
+      const o = Plateau.objetsAPortee(g, etat, h).find(k => k.id === oid);
+      if (!o) return msg('Objet hors de portée : placez-vous sur sa case ou sur une case voisine.');
+      if (Plateau.objetsPortes(quete, etat, h.id).length >= UN_OBJET_PAR_HEROS) return msg(`${h.nom} porte déjà un objet : il doit d’abord le poser.`);
+      modifier(e => { const s = Plateau.etatObjets(quete, e).find(k => k.id === oid); s.porteur = h.id; s.x = h.x; s.y = h.y; });
+      msg(`${h.nom} prend ${o.nom}.`, rappelCharge(herosActif()));
+    }
+    function poserObjet(oid) {
+      const h = herosActif();
+      const o = Plateau.objetsPortes(quete, etat, h.id).find(k => k.id === oid);
+      if (!o) return;
+      modifier(e => { const s = Plateau.etatObjets(quete, e).find(k => k.id === oid); s.porteur = null; s.x = h.x; s.y = h.y; });
+      msg(`${h.nom} pose ${o.nom}.`);
     }
 
     // Un pas (ou un saut de 2 cases) : compteur du tour et numéro inscrit sur la case d'arrivée.
@@ -1021,6 +1074,12 @@ const VuePlateau = (() => {
         if (surEscalier(h)) return `${h.nom} est à l’escalier${or ? ` : ${or} pièces d’or à partager` : ''}.`;
         return `${h.nom} n’est pas à l’escalier${or ? ' : pas de récompense si vous terminez maintenant' : ''}.`;
       });
+      // Objets à rapporter (v0.35.0).
+      const { aRapporter, rapportes } = Plateau.bilanObjets(quete, etat);
+      if (aRapporter.length) {
+        const ro = quete.recompenseObjets?.or;
+        allies.push(`Objets rapportés : ${rapportes.length} sur ${aRapporter.length}${ro ? (rapportes.length === aRapporter.length ? ` : ${ro} pièces d’or à partager` : ' : pas de récompense si vous terminez maintenant') : ''}.`);
+      }
       boite.innerHTML = `<span>Tous les héros sont revenus à l’escalier. Terminer la quête ?${aTerre.length
           ? ` <span class="erreur">${echapperTexte(aTerre.join(', '))} (à terre) ${aTerre.length > 1 ? 'seront comptés comme morts' : 'sera compté comme mort'}.</span>` : ''}${allies.length ? ' ' + echapperTexte(allies.join(' ')) : ''}</span>
         <button id="inv-reussie" class="principal">Quête réussie</button>
@@ -2498,6 +2557,7 @@ const VuePlateau = (() => {
               · Action : ${fait ? 'faite' : 'disponible'}</p>
             <p class="discret petit">Pour se déplacer : touchez ${echapperTexte(h.nom)} sur le plateau, puis les cases éclairées ; touchez-le à nouveau pour s’arrêter.</p>
             ${t.deplacement ? '<div class="choix"><button id="md-terminer-depl">Arrêter le déplacement</button></div>' : ''}
+            ${rappelCharge(h) ? `<p class="erreur petit">${echapperTexte(rappelCharge(h))}</p>` : ''}
             ${t.finForcee ? `<p class="erreur petit">⚠ Un piège a mis fin au tour de ${echapperTexte(h.nom)} : normalement, il ne fait plus rien ce tour-ci.</p>` : ''}
             ${h.passeTour ? `<p class="erreur petit">⚠ Tornade : ${echapperTexte(h.nom)} devrait passer ce tour.</p>` : ''}
             ${h.endormi ? `<p class="erreur petit">⚠ ${echapperTexte(h.nom)} est endormi : il ne bouge ni n’agit, sauf s’il fait un 6. <button id="md-reveil">Tenter de se réveiller</button></p>` : ''}
@@ -2512,6 +2572,12 @@ const VuePlateau = (() => {
               ${desamorcables.length ? '<button id="md-desamorcer">Désamorcer le piège</button>' : ''}
               ${meublesDesamorcables().map(m => `<button data-desarmer-meuble="${m.id}">Désamorcer : ${echapperTexte(m.nom)}</button>`).join('')}
             </div>
+            ${Plateau.objetsAPortee(g, etat, h).length || Plateau.objetsPortes(quete, etat, h.id).length ? `<h3 class="titre-section">Objets</h3>
+            <div class="choix">
+              ${Plateau.objetsAPortee(g, etat, h).map(o => `<button data-prendre="${o.id}">Prendre : ${echapperTexte(o.nom)}</button>`).join('')}
+              ${Plateau.objetsPortes(quete, etat, h.id).map(o => `<button data-poser="${o.id}">Poser : ${echapperTexte(o.nom)}</button>`).join('')}
+            </div>
+            <p class="discret petit">Prendre ou poser un objet ne compte ni comme déplacement ni comme action.</p>` : ''}
             ${coffreTropLoin(h) ? '<p class="erreur petit">Il y a un coffre dans cette pièce : pour chercher un trésor, placez-vous d’abord sur une case voisine d’un coffre.</p>' : ''}
             ${monstreEnVue(h, 'pieges') || monstreEnVue(h, 'portes')
               ? '<p class="erreur petit">Un monstre est en vue : pas de fouille des pièges ni des portes secrètes (règle).</p>' : ''}
@@ -2537,6 +2603,8 @@ const VuePlateau = (() => {
       sur('#md-fouille-tresor', () => { fenetreActions = null; fouillerTresor(); });
       sur('#md-sorts', () => { fenetreActions = 'sorts'; dessiner(); });
       sur('#md-reveil', () => { fenetreActions = null; evenement = { genre: 'reveil' }; dessiner(); });
+      boite.querySelectorAll('[data-prendre]').forEach(b => b.addEventListener('click', () => { fenetreActions = null; prendreObjet(b.dataset.prendre); }));
+      boite.querySelectorAll('[data-poser]').forEach(b => b.addEventListener('click', () => { fenetreActions = null; poserObjet(b.dataset.poser); }));
       boite.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => choisirSort(b.dataset.sort)));
       boite.querySelectorAll('[data-desarmer-meuble]').forEach(b => b.addEventListener('click', () => { fenetreActions = null; evenement = { genre: 'desarmerMeuble', meuble: b.dataset.desarmerMeuble }; dessiner(); }));
       sur('#md-fouille-pieges', () => { fenetreActions = null; fouiller('pieges'); });
