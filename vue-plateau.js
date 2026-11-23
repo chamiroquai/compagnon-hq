@@ -63,7 +63,10 @@ const VuePlateau = (() => {
     const caracBrute = (h, champ) => (Number.isFinite(h?.[champ]) ? h[champ] : carac('heros', h.classe || h.id, champ));
     // Dans une fosse : un dé de combat de moins en attaque et en défense (minimum 1).
     const penaliteFosse = (f, champ, n) => (n !== null && (champ === 'attaque' || champ === 'defense') && Plateau.fosseEn(etat, f.x, f.y) ? Math.max(1, n - 1) : n);
-    const bonusSorts = (h, champ, n) => (n === null ? n : n + (champ === 'attaque' && h.courage ? 2 : 0) + (champ === 'defense' && h.peauRoc ? 2 : 0));
+    // Dés rouges lancés par l'application (résistances aux sorts, carte 2021) : valeurs de 1 à 6.
+    const desRouges = n => Array.from({ length: n }, () => 1 + Math.floor(Math.random() * 6));
+    const MORTS_VIVANTS = ['squelette', 'zombie', 'momie']; // le Sommeil n'a pas d'effet sur eux
+    const bonusSorts = (h, champ, n) => (n === null ? n : n + (champ === 'attaque' && h.courage ? 2 : 0) + (champ === 'defense' && h.peauRoc ? 1 : 0));
     /* Équipement (inventaire.js), décision de l'utilisateur du 22/11/2026 :
        l'arme en main REMPLACE les dés d'attaque (si ses dés sont indiqués) ;
        les pièces d'armure AJOUTENT leurs bonus aux dés de défense. */
@@ -83,7 +86,7 @@ const VuePlateau = (() => {
       if (champ === 'defense' && Inventaire.bouclierInutile(h?.inventaire || [])) parts.push('bouclier inutilisable avec une arme à deux mains');
       if (Plateau.fosseEn(etat, h.x, h.y)) parts.push('−1 dans la fosse');
       if (champ === 'attaque' && h.courage) parts.push('+2 Courage');
-      if (champ === 'defense' && h.peauRoc) parts.push('+2 Peau de roc');
+      if (champ === 'defense' && h.peauRoc) parts.push('+1 Peau de roc');
       return parts.length ? ` <span class="discret petit">(${parts.map(echapperTexte).join(', ')})</span>` : '';
     }
     const caracMonstre = (m, champ) => penaliteFosse(m, champ, Regles.valeurMonstre(caracs, m, champ));
@@ -761,7 +764,7 @@ const VuePlateau = (() => {
       // Écart n° 1 : un seul déplacement par tour. On avertit, on ne bloque pas.
       if (etat.tour.aBouge) avert.push(`⚠ ${actif.nom} s’est déjà déplacé ce tour-ci (règle : un seul déplacement par tour).`);
       if (actif.endormi) avert.push(`⚠ ${actif.nom} est endormi.`);
-      if (actif.passeTour) avert.push(`⚠ Tempête : ${actif.nom} devrait passer ce tour.`);
+      if (actif.passeTour) avert.push(`⚠ Tornade : ${actif.nom} devrait passer ce tour.`);
       modifier(e => {
         const k = e.heros.find(z => z.id === actif.id);
         // Sorts « au prochain déplacement » : ils s'appliquent à ce déplacement, puis disparaissent.
@@ -794,10 +797,14 @@ const VuePlateau = (() => {
       const surMonstre = etat.monstres.some(m => m.x === x && m.y === y);
       const depuis = [actif.x, actif.y];
       const parPassage = !!Plateau.passageEntre(g, etat, actif.x, actif.y, x, y);
+      // À travers la pierre : un pas qui franchit un mur (ou entre dans le roc, ou en sort) compte un mur.
+      const mur = !!effets.traverse && !parPassage && (!Plateau.ouvert(g, etat, Plateau.idx(L, actif.x, actif.y), Plateau.idx(L, x, y))
+        || g.zones[Plateau.idx(L, x, y)] === '#' || g.zones[Plateau.idx(L, actif.x, actif.y)] === '#');
       let actionne = null;
       modifier(e => {
         const h = e.heros.find(k => k.id === actif.id);
         h.x = x; h.y = y;
+        if (mur && e.tour.deplacement?.effets) e.tour.deplacement.effets.murs = (e.tour.deplacement.effets.murs || 0) + 1;
         compterPas(e, x, y);
         // Interrupteur repéré sous les pieds du héros : il s'actionne.
         const t = Plateau.interrupteurPret(g, e, x, y);
@@ -816,6 +823,11 @@ const VuePlateau = (() => {
         return dessiner();
       }
       if (parPassage) return msg(`${actif.nom} emprunte le passage secret.`);
+      if (effets.traverse) {
+        const n = etat.tour.deplacement?.effets?.murs || 0;
+        return msg(`À travers la pierre : ${n} mur${n > 1 ? 's' : ''} traversé${n > 1 ? 's' : ''} (pas plus que le total de vos dés).`,
+          dansLeRoc(herosActif()) ? `⚠ Roc massif : si ${actif.nom} s’arrête ici, il y restera emprisonné à jamais.` : '');
+      }
       msg(surHeros ? `${actif.nom} passe la case de ${surHeros.nom} (on ne peut pas s’y arrêter).`
         : surMonstre ? 'Voile de brume : on traverse la case d’un monstre, mais on ne peut pas s’y arrêter.' : '');
     }
@@ -825,7 +837,7 @@ const VuePlateau = (() => {
       if ((!effets.brume && !effets.traverse) || Plateau.passageEntre(g, etat, h.x, h.y, x, y)) return Plateau.raisonBlocage(g, etat, h.x, h.y, x, y);
       if (x < 0 || y < 0 || x >= L || y >= H) return 'Hors du plateau.';
       if (Math.abs(x - h.x) + Math.abs(y - h.y) !== 1) return 'Une case à la fois, sans diagonale : touchez une case voisine du héros.';
-      if (g.zones[Plateau.idx(L, x, y)] === '#') return 'Roche : impossible de passer.';
+      if (!effets.traverse && g.zones[Plateau.idx(L, x, y)] === '#') return 'Roche : impossible de passer.';
       if (Plateau.eboulementEn(etat, x, y)) return 'Un éboulement bloque le passage pour toujours.';
       if (!effets.traverse && !Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, x, y))) return 'Un mur ou une porte fermée bloque le passage.';
       if (!effets.brume && etat.monstres.some(m => m.x === x && m.y === y)) return 'Un monstre bloque le passage.';
@@ -835,8 +847,23 @@ const VuePlateau = (() => {
     }
 
     // Arrêter le déplacement avant d'avoir tout utilisé (permis par les règles).
+    // Héros dans le roc massif (À travers la pierre, carte 2021).
+    function dansLeRoc(h) { return !!h && h.x != null && g.zones[Plateau.idx(L, h.x, h.y)] === '#'; }
+    // S'arrêter dans le roc : emprisonné à jamais (confirmation). Renvoie true si le héros y reste.
+    function emprisonnerDansLeRoc(h) {
+      if (!confirm(`${h.nom} est dans le roc massif. S’il s’arrête ici, il y restera emprisonné à jamais et sera perdu pour la quête.\n\nS’arrêter quand même ?`)) {
+        msg(`Continuez le déplacement de ${h.nom} pour sortir du roc.`);
+        return false;
+      }
+      modifier(e => { e.tour.deplacement = null; });
+      mourir(h.id);
+      msg(`☠ ${h.nom} est emprisonné à jamais dans le roc.`);
+      return true;
+    }
+
     function terminerDeplacement() {
       const actif = herosActif();
+      if (dansLeRoc(actif)) return emprisonnerDansLeRoc(actif);
       if (etat.monstres.some(m => m.x === actif.x && m.y === actif.y)) return msg('Voile de brume : on ne peut pas s’arrêter sur la case d’un monstre.');
       const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
       if (autre) return msg(`On ne peut pas s’arrêter sur la case de ${autre.nom} : avancez encore d’une case.`);
@@ -847,6 +874,7 @@ const VuePlateau = (() => {
 
     function finDuTour() {
       const actif = herosActif();
+      if (dansLeRoc(actif)) return emprisonnerDansLeRoc(actif);
       if (etat.monstres.some(m => m.x === actif.x && m.y === actif.y)) return msg('On ne peut pas s’arrêter sur la case d’un monstre : avancez encore.');
       if (etat.tour.deplacement) {
         const autre = Plateau.autreHerosEn(etat, actif.id, actif.x, actif.y);
@@ -855,7 +883,7 @@ const VuePlateau = (() => {
       fenetreActions = null; ciblage = false; djinnPorteChoix = false; djinnMonstreChoix = false; sortCible = null; combat = null; conclusion = null; evenement = null;
       modifier(e => {
         const k = e.heros.find(z => z.id === actif.id);
-        if (k) delete k.passeTour; // la Tempête ne dure qu'un tour
+        if (k) delete k.passeTour; // la Tornade ne dure qu'un tour
         passerAuSuivant(e);
       });
       const suivant = herosActif();
@@ -1003,11 +1031,12 @@ const VuePlateau = (() => {
         const m = e.monstres.find(k => k.id === z.file[z.n]);
         if (!m) { z.n++; continue; }
         const nomM = infoMonstre(m.type).nom;
-        if (m.passeTour) { z.plan = { monstre: m.id, statut: 'tempete', ambiance: `La tempête enveloppe ${nomM} : il passe son tour.` }; return; }
+        if (m.passeTour) { z.plan = { monstre: m.id, statut: 'tempete', ambiance: `Une tornade enveloppe ${nomM} : il passe son tour.` }; return; }
         let reveil = '';
         if (m.endormi) {
-          const de = 1 + Math.floor(Math.random() * 6);
-          if (de !== 6) { z.plan = { monstre: m.id, statut: 'dort', de, ambiance: Ambiance.tirer('dort', { monstre: nomM }) }; return; }
+          // Carte 2021 : 1 dé rouge par point d'Esprit ; un 6 brise le sort.
+          const des = desRouges(Math.max(1, Regles.valeurMonstre(caracs, m, 'esprit') ?? 1));
+          if (!des.includes(6)) { z.plan = { monstre: m.id, statut: 'dort', de: des.join(', '), ambiance: Ambiance.tirer('dort', { monstre: nomM }) }; return; }
           delete m.endormi; // réveillé au début de son tour : il agit dans ce même tour (décision du 4/11/2026)
           reveil = Ambiance.tirer('reveil', { monstre: nomM }) + ' ';
         }
@@ -1028,8 +1057,8 @@ const VuePlateau = (() => {
       const m = etat.monstres.find(k => k.id === p.monstre);
       const nom = nomVisible(m);
       if (p.erreur) return `${infoMonstre(m.type).nom} : déplacement ou attaque inconnus (Réglages › Caractéristiques).`;
-      if (p.statut === 'tempete') return `${nom} passe son tour (Tempête).`;
-      if (p.statut === 'dort') return `${nom} dort (dé de réveil : ${p.de}, il fallait un 6).`;
+      if (p.statut === 'tempete') return `${nom} passe son tour (Tornade).`;
+      if (p.statut === 'dort') return `${nom} dort (dés rouges : ${p.de} ; il fallait un 6).`;
       const h = p.cible && etat.heros.find(k => k.id === p.cible);
       const pas = p.chemin.length;
       if (!pas && h) return `${nom} attaque ${h.nom} sans bouger.`;
@@ -1224,6 +1253,7 @@ const VuePlateau = (() => {
         if (e.tour.deplacement) e.tour.deplacement = null;
         e.tour.actions = (e.tour.actions || 0) + 1;
         if (ev.mode === 'lancer') { const kh = e.heros.find(z => z.id === h.id), t = Inventaire.tri(kh.inventaire || []); if (t.arme) kh.inventaire.splice(t.arme.k, 1); }
+        delete e.heros.find(z => z.id === h.id).courage; // Courage : valable pour une seule attaque
         vie = blesser(e, v.id, degats);
       });
       const texte = (cranes === 0 ? 'Aucun crâne : le coup ne fait rien.'
@@ -1239,14 +1269,10 @@ const VuePlateau = (() => {
       const h = herosActif();
       const m = etat.monstres.find(k => k.id === combat.monstre);
       const nom = infoMonstre(m.type).nom;
-      // Monstre endormi : il se réveille sur un 6 et se défend ; sinon il ne se défend pas.
+      // Monstre endormi (Sommeil, carte 2021) : il ne se défend pas.
       let noteSommeil = '';
       let nbDef = caracMonstre(m, 'defense');
-      if (m.endormi) {
-        const de = 1 + Math.floor(Math.random() * 6);
-        if (de === 6) noteSommeil = ` (${nom} se réveille sur un 6 et se défend.)`;
-        else { nbDef = 0; noteSommeil = ` (${nom} dort — dé de réveil : ${de} — il ne se défend pas.)`; }
-      }
+      if (m.endormi) { nbDef = 0; noteSommeil = ` (${nom} dort : il ne se défend pas.)`; }
       const tirage = Regles.lancer(nbDef);
       const noirs = Regles.compter(tirage, 'noir');
       const degats = Math.max(0, cranes - noirs);
@@ -1260,13 +1286,13 @@ const VuePlateau = (() => {
         if (!parSort) {
           if (e.tour.deplacement) e.tour.deplacement = null; // une action termine le déplacement en cours
           e.tour.actions = (e.tour.actions || 0) + 1;
+          delete e.heros.find(z => z.id === h.id).courage; // Courage : valable pour une seule attaque
         }
         if (lancee) {
           const kh = e.heros.find(z => z.id === h.id), t = Inventaire.tri(kh.inventaire || []);
           if (t.arme) kh.inventaire.splice(t.arme.k, 1);
         }
         const k = e.monstres.find(z => z.id === m.id);
-        if (noteSommeil.includes('réveille')) delete k.endormi;
         k.corps = vieApres;
         if (vieApres === 0) e.monstres = e.monstres.filter(z => z.id !== m.id);
       });
@@ -1755,7 +1781,7 @@ const VuePlateau = (() => {
           <div class="choix"><button id="ev-annuler">Annuler</button></div>`;
       }
       if (ev.genre === 'reveil') return `${tete}<p class="titre-zargon">${echapperTexte(h.nom)} est endormi</p>
-        <p class="question">Lancez 1 dé à six faces : avez-vous fait 6 ?</p>
+        <p class="question">Lancez 1 dé rouge par point d’Esprit (${h.espritMax ?? h.esprit ?? '?'}) : avez-vous fait au moins un 6 ?</p>
         <div class="choix"><button data-reveil="1" class="principal">Oui, 6 : réveillé</button><button data-reveil="0">Non</button></div>`;
       if (ev.genre === 'lance') return `${tete}<p class="titre-zargon">Piège à lance !</p>${amb}
         <p class="question">${h.nom} : lancez 1 dé de combat.</p>
@@ -1856,7 +1882,7 @@ const VuePlateau = (() => {
       boite.querySelectorAll('[data-tir-blancs]').forEach(b => b.addEventListener('click', () => resoudreTirHeros(evenement.cranes, +b.dataset.tirBlancs)));
       boite.querySelector('#djinn-choisir-monstre')?.addEventListener('click', () => {
         evenement = null; djinnMonstreChoix = true;
-        msg('Djinn : touchez le monstre à attaquer (entouré de rouge), où qu’il soit.');
+        msg('Djinn : touchez le monstre à attaquer (entouré de rouge).');
         dessiner();
       });
       boite.querySelector('#djinn-choisir-porte')?.addEventListener('click', () => {
@@ -1877,21 +1903,22 @@ const VuePlateau = (() => {
 
     /* ---------- Sorts ----------
        Lancer un sort est l'action du tour ; chaque sort ne sert qu'une fois par quête.
-       La cible doit être visible (les figurines bloquent la vue), sauf Djinn et
-       Feu du courroux : sinon, avertissement (principe d'arbitrage). */
+       La cible doit être visible et atteignable par une trajectoire libre (sauf Djinn).
+       Effets alignés sur les cartes françaises 2021 (23/11/2026) : résistances aux dés rouges,
+       Sommeil sans effet sur les morts-vivants, Courage pour une attaque, Peau de roc +1 dé. */
 
     const sortsDe = h => etat.sorts?.[h.id] || [];
 
     // Effets en cours sur un héros, pour la fiche et la fenêtre Actions.
     function effetsHeros(h) {
       const e = [];
-      if (h.courage) e.push('Courage (+2 dés d’attaque)');
-      if (h.peauRoc) e.push('Peau de roc (+2 dés de défense)');
-      if (h.ventVif) e.push('Vent vif (prochain déplacement : 4 dés)');
+      if (h.courage) e.push('Courage (+2 dés à la prochaine attaque)');
+      if (h.peauRoc) e.push('Peau de roc (+1 dé de défense)');
+      if (h.ventVif) e.push('Vif comme le vent (prochain déplacement : dés rouges doublés)');
       if (h.brume) e.push('Voile de brume (prochain déplacement)');
-      if (h.traverse) e.push('Au travers de la pierre (prochain déplacement)');
+      if (h.traverse) e.push('À travers la pierre (prochain déplacement)');
       if (h.endormi) e.push('Endormi');
-      if (h.passeTour) e.push('Passe son prochain tour (Tempête)');
+      if (h.passeTour) e.push('Passe son prochain tour (Tornade)');
       if (Plateau.fosseEn(etat, h.x, h.y)) e.push('Dans une fosse (−1 dé)');
       return e;
     }
@@ -1917,6 +1944,10 @@ const VuePlateau = (() => {
 
     function lancerSort(id, cible) { // cible : { genre: 'heros' | 'monstre', id }
       const h = herosActif(), s = Sorts.sort(id);
+      if (id === 'sommeil' && cible.genre === 'monstre' && MORTS_VIVANTS.includes(etat.monstres.find(k => k.id === cible.id)?.type)) {
+        sortCible = id; dessiner();
+        return msg('Sommeil : sans effet sur les momies, zombies et squelettes. Touchez un autre monstre, ou « Retour ».');
+      }
       const amb = Ambiance.tirer('sort', { heros: h.nom });
       const titre = `${s.nom}`;
       // Trajectoire (règles du 23/11/2026) : sauf sur soi-même et pour les sorts « n'importe où »,
@@ -1957,16 +1988,16 @@ const VuePlateau = (() => {
           return fin(`Au prochain déplacement, ${nomC} lancera 4 dés rouges.`);
         case 'brume':
           surHeros(k => { k.brume = true; });
-          return fin(`Au prochain déplacement, ${nomC} pourra traverser les cases occupées (sans s’y arrêter).`);
+          return fin(`Au prochain déplacement, ${nomC} pourra traverser les cases occupées par des monstres (sans s’y arrêter).`);
         case 'traversPierre':
           surHeros(k => { k.traverse = true; });
-          return fin(`Au prochain déplacement, ${nomC} traversera les murs.`);
+          return fin(`Au prochain déplacement, ${nomC} pourra traverser autant de murs que le total de ses dés. Attention : finir dans le roc massif, c’est y rester emprisonné à jamais.`);
         case 'courage':
           surHeros(k => { k.courage = true; });
-          return fin(`${nomC} gagne 2 dés d’attaque tant qu’un monstre est en vue.`);
+          return fin(`${nomC} lancera 2 dés de combat de plus à sa prochaine attaque (le sort prend fin s’il n’y a plus de monstre en vue).`);
         case 'peauRoc':
           surHeros(k => { k.peauRoc = true; });
-          return fin(`${nomC} gagne 2 dés de défense jusqu’à sa première blessure.`);
+          return fin(`${nomC} gagne 1 dé de défense jusqu’à sa première blessure.`);
         case 'eauGuerison': case 'guerisonCorps': {
           let gain = 0;
           surHeros(k => { const avant = k.corps ?? 0; k.corps = Math.min(k.corpsMax ?? avant + 4, avant + 4); gain = k.corps - avant; });
@@ -1974,39 +2005,41 @@ const VuePlateau = (() => {
         }
         case 'sommeil':
           if (cible.genre === 'monstre') {
-            const esprit = Regles.valeurMonstre(caracs, visee, 'esprit') ?? 0;
-            const tirage = Regles.lancer(esprit);
-            const resiste = tirage.some(f => f === 'blanc' || f === 'noir');
+            if (MORTS_VIVANTS.includes(visee.type)) {
+              surMonstre(() => {});
+              return fin(`Le sommeil n’a aucun effet sur ${nomC} (momies, zombies et squelettes y échappent).`);
+            }
+            const esprit = Math.max(1, Regles.valeurMonstre(caracs, visee, 'esprit') ?? 1);
+            const des = desRouges(esprit);
+            const resiste = des.includes(6);
             surMonstre(k => { if (!resiste) k.endormi = true; });
-            return fin(resiste ? `${nomC} résiste au sommeil (un bouclier sur ${esprit} dé${esprit > 1 ? 's' : ''}).` : `${nomC} s’endort : il ne bouge plus et ne se défend plus, jusqu’à ce qu’il fasse un 6.`,
-              { tirage, cle: 'so' + Date.now(), legende: `Résistance de ${nomC} (1 dé par point d’Esprit)` });
+            return fin((resiste ? `${nomC} fait un 6 : il se libère aussitôt du sommeil.` : `${nomC} s’endort : il ne bouge plus, n’attaque plus et ne se défend plus. À chacun de ses tours, il tentera de faire un 6.`)
+              + ` (${esprit} dé${esprit > 1 ? 's' : ''} rouge${esprit > 1 ? 's' : ''} : ${des.join(', ')}.)`);
           }
           evenement = { genre: 'questionSort', sort: id, cible, avertissement, ambiance: amb,
-            question: `${nomC} résiste avec ${visee.espritMax ?? visee.esprit ?? '?'} dé(s) (1 par point d’Esprit). A-t-il obtenu au moins un bouclier ?`,
-            reponses: [['resiste', 'Oui, un bouclier'], ['dort', 'Non']] };
+            question: `${nomC} lance 1 dé rouge par point d’Esprit (${visee.espritMax ?? visee.esprit ?? '?'}). A-t-il fait au moins un 6 ?`,
+            reponses: [['resiste', 'Oui, un 6 : il se libère'], ['dort', 'Non : il s’endort']] };
           return dessiner();
         case 'bouleFeu':
           if (cible.genre === 'monstre') {
-            const tirage = Regles.lancer(2);
-            const degats = Math.max(0, 2 - Regles.compter(tirage, 'crane'));
+            const des = desRouges(2);
+            const degats = Math.max(0, 2 - des.filter(d => d >= 5).length);
             const res = degatsMonstre(cible.id, degats, h, e => consommerSort(e, h.id, id));
-            return fin(`${nomC} lance 2 dés : chaque crâne réduit la perte. ${degats ? `${degats} point${degats > 1 ? 's' : ''} de Vie perdu${degats > 1 ? 's' : ''}.` : 'Aucune perte !'}${res}`,
-              { tirage, cle: 'bf' + Date.now(), legende: `Riposte de ${nomC}` });
+            return fin(`${nomC} lance 2 dés rouges (${des.join(', ')}) : chaque 5 ou 6 réduit la perte. ${degats ? `${degats} point${degats > 1 ? 's' : ''} de Vie perdu${degats > 1 ? 's' : ''}.` : 'Aucune perte !'}${res}`);
           }
           evenement = { genre: 'questionSort', sort: id, cible, avertissement, ambiance: amb,
-            question: `${nomC} lance 2 dés de combat : combien de crânes ? (chacun réduit la perte de 1)`, reponses: [['0', '0'], ['1', '1'], ['2', '2']] };
+            question: `${nomC} lance 2 dés rouges : combien de 5 ou de 6 ? (chacun réduit la perte de 1)`, reponses: [['0', '0'], ['1', '1'], ['2', '2']] };
           return dessiner();
         case 'feuCourroux':
           if (cible.genre === 'monstre') {
-            const tirage = Regles.lancer(1);
-            const pare = tirage.some(f => f === 'blanc' || f === 'noir');
+            const [de] = desRouges(1);
+            const pare = de >= 5;
             const res = pare ? '' : degatsMonstre(cible.id, 1, h, e => consommerSort(e, h.id, id));
             if (pare) modifier(e => consommerSort(e, h.id, id));
-            return fin(pare ? `${nomC} obtient un bouclier : le feu ne l’atteint pas.` : `${nomC} perd 1 point de Vie.${res}`,
-              { tirage, cle: 'fc' + Date.now(), legende: `Dé de ${nomC}` });
+            return fin(pare ? `${nomC} fait ${de} sur le dé rouge : le feu ne l’atteint pas.` : `${nomC} fait ${de} sur le dé rouge : il perd 1 point de Vie.${res}`);
           }
           evenement = { genre: 'questionSort', sort: id, cible, avertissement, ambiance: amb,
-            question: `${nomC} lance 1 dé de combat : un bouclier ?`, reponses: [['pare', 'Oui, un bouclier'], ['touche', 'Non']] };
+            question: `${nomC} lance 1 dé rouge : a-t-il fait 5 ou 6 ?`, reponses: [['pare', 'Oui, 5 ou 6'], ['touche', 'Non']] };
           return dessiner();
       }
     }
@@ -2042,7 +2075,7 @@ const VuePlateau = (() => {
       return texte;
     }
 
-    // Djinn : attaque n'importe quelle figurine avec 5 dés (le joueur les lance), ou ouvre n'importe quelle porte.
+    // Djinn : attaque un monstre en vue avec 5 dés (le joueur les lance), ou ouvre une porte.
     function djinnAttaque(mid) {
       const h = herosActif();
       modifier(e => consommerSort(e, h.id, 'djinn'));
@@ -2301,7 +2334,7 @@ const VuePlateau = (() => {
             <p class="discret petit">Pour se déplacer : touchez ${echapperTexte(h.nom)} sur le plateau, puis les cases éclairées ; touchez-le à nouveau pour s’arrêter.</p>
             ${t.deplacement ? '<div class="choix"><button id="md-terminer-depl">Arrêter le déplacement</button></div>' : ''}
             ${t.finForcee ? `<p class="erreur petit">⚠ Un piège a mis fin au tour de ${echapperTexte(h.nom)} : normalement, il ne fait plus rien ce tour-ci.</p>` : ''}
-            ${h.passeTour ? `<p class="erreur petit">⚠ Tempête : ${echapperTexte(h.nom)} devrait passer ce tour.</p>` : ''}
+            ${h.passeTour ? `<p class="erreur petit">⚠ Tornade : ${echapperTexte(h.nom)} devrait passer ce tour.</p>` : ''}
             ${h.endormi ? `<p class="erreur petit">⚠ ${echapperTexte(h.nom)} est endormi : il ne bouge ni n’agit, sauf s’il fait un 6. <button id="md-reveil">Tenter de se réveiller</button></p>` : ''}
             ${effetsHeros(h).length ? `<p class="etat-heros">${effetsHeros(h).map(echapperTexte).join(' · ')}</p>` : ''}
             <h3 class="titre-section">Actions${fait ? ' ⚠' : ''}</h3>
