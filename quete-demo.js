@@ -96,6 +96,13 @@ const QUETE_DEMO = {
   // s'en rapproche au mieux s'il ne peut pas l'atteindre), « garde » (ne bouge pas, attaque
   // au contact) ou « piece » (chasse sans quitter sa pièce). Valeur par défaut de toute la
   // quête : champ « comportementMonstres » à la racine.
+  // Ciblage (facultatif) : qui le monstre attaque. Par défaut selon son type : « proche »
+  // (squelettes, zombies, momies : le héros le plus proche), « opportuniste » (gobelins :
+  // héros isolé, blessé ou mal protégé, puis repli après avoir frappé sans bouger),
+  // « menace » (orques, guerriers de la Terreur, abominations, gargouilles : celui qui bloque
+  // un passage ou frappe le plus fort), « tactique » (sorcier de la Terreur : lanceur de sorts,
+  // porteur d'un objet clé, héros qui tient l'entrée de sa pièce ou héros isolé).
+  // Valeur pour toute la quête : « ciblageMonstres » ; objets clés : « objetsCles » (noms).
   monstres: [
     { id: 'mo1', type: 'gobelin', x: 3, y: 2 },
     { id: 'mo2', type: 'orque', x: 9, y: 2 },

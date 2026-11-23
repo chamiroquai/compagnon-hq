@@ -1127,13 +1127,31 @@ const VuePlateau = (() => {
         }
         const dep = Regles.valeurMonstre(caracs, m, 'deplacement');
         if (dep === null || Regles.valeurMonstre(caracs, m, 'attaque') === null) { z.plan = { monstre: m.id, erreur: true }; return; }
-        const plan = { monstre: m.id, ...Plateau.planMonstre(g, e, m, dep) };
+        const plan = { monstre: m.id, ...Plateau.planMonstre(g, e, m, dep, infosCible) };
         const h = plan.cible && e.heros.find(k => k.id === plan.cible);
         const cat = !e.revele.includes(Plateau.idx(L, m.x, m.y)) ? 'ombre' : !plan.chemin.length ? (h ? 'attaque' : 'immobile') : 'approche';
         plan.ambiance = reveil + Ambiance.tirer(cat, { monstre: infoMonstre(m.type).nom, heros: h?.nom || 'les héros', type: m.type });
         z.plan = plan;
         return;
       }
+    }
+
+    // Ce que les monstres « savent » d'un héros pour choisir leur cible (équipement compris).
+    function infosCible(h) { return { attaque: caracHeros(h, 'attaque'), defense: caracHeros(h, 'defense') }; }
+
+    // Après une attaque sans déplacement, un monstre opportuniste (gobelin) se replie :
+    // le plan suivant est son repli (sinon on passe au monstre suivant).
+    function suiteApresAttaque(e, idMonstre, repli) {
+      const z = e.zargon, k = e.monstres.find(q => q.id === idMonstre);
+      if (repli && k) {
+        const chemin = Plateau.planRepli(g, e, k, Regles.valeurMonstre(caracs, k, 'deplacement') || 0);
+        if (chemin.length) {
+          z.plan = { monstre: k.id, chemin, cible: null, atteint: false, repliEnCours: true,
+            ambiance: `${infoMonstre(k.type).nom} frappe puis détale hors de portée.` };
+          return;
+        }
+      }
+      z.n++; preparerZargon(e);
     }
 
     function decrirePlan() {
@@ -1148,6 +1166,7 @@ const VuePlateau = (() => {
       const pas = p.chemin.length;
       if (!pas && h) return `${nom} attaque ${h.nom} sans bouger.`;
       if (!pas) return `${nom} reste sur place.`;
+      if (p.repliEnCours) return `${nom} se replie de ${pas} case${pas > 1 ? 's' : ''}.`;
       return `${nom} avance de ${pas} case${pas > 1 ? 's' : ''}` + (h ? ` et attaque ${h.nom}.` : '.');
     }
 
@@ -1181,12 +1200,14 @@ const VuePlateau = (() => {
           const tirage = Regles.lancer(caracMonstre(k, 'attaque'));
           const cranes = Regles.compter(tirage, 'crane');
           if (cranes > 0) {
-            z.defense = { monstre: k.id, heros: p.cible, tirage, cranes, cle: 'z' + Date.now() };
+            z.defense = { monstre: k.id, heros: p.cible, tirage, cranes, cle: 'z' + Date.now(), repli: !!p.repli };
             z.plan = null;
             return;
           }
           // Aucun crâne : le duel s'affiche quand même, avec la conclusion.
           resultat = { genre: 'zargon', heros: p.cible, monstre: k.id, type: k.type, tirage, cranes: 0, blancs: 0, degats: 0, cle: 'z' + Date.now() };
+          suiteApresAttaque(e, k.id, p.repli);
+          return;
         }
         z.n++; preparerZargon(e);
       });
@@ -1202,6 +1223,7 @@ const VuePlateau = (() => {
     function decrireDernierCoup(p) {
       const m = etat.monstres.find(k => k.id === p.monstre);
       const pas = p.chemin.length;
+      if (m && p.repliEnCours) return `${nomVisible(m)} se replie de ${pas} case${pas > 1 ? 's' : ''}.`;
       return m ? `${nomVisible(m)} ${pas ? `avance de ${pas} case${pas > 1 ? 's' : ''}` : 'reste sur place'}.` : '';
     }
 
@@ -1218,7 +1240,7 @@ const VuePlateau = (() => {
         if (degats > 0) delete k.peauRoc;
         k.corps = Math.max(0, (k.corps ?? 0) - degats);
         e.zargon.defense = null;
-        e.zargon.n++; preparerZargon(e);
+        suiteApresAttaque(e, d.monstre, d.repli);
       });
       conclusion = {
         genre: 'zargon', heros: h.id, monstre: m.id, type: m.type, tirage: d.tirage, cranes: d.cranes, blancs, degats, cle: d.cle, vieHerosAvant,

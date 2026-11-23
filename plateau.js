@@ -314,44 +314,123 @@ const Plateau = (() => {
     return COMPORTEMENTS.includes(c) ? c : 'chasse';
   }
 
-  // Plan d'un monstre : vers la case libre la plus proche (en nombre de pas)
-  // d'où il peut attaquer un héros vivant (case voisine, sans mur entre eux).
+  /* Choix de la cible (demande de l'utilisateur du 23/11/2026) : chaque monstre a un
+     « ciblage », d'après son type, modifiable par la quête (champ « ciblage » du monstre,
+     sinon « ciblageMonstres » à la racine, sinon la valeur de son type) :
+     - proche       : le héros le plus proche qu'il peut atteindre (morts-vivants) ;
+     - menace       : parmi les héros qu'il peut attaquer le plus tôt, celui qui bloque un
+                      passage, puis celui qui frappe le plus fort, puis le plus proche
+                      (orques, guerriers de la Terreur, abominations, gargouilles) ;
+     - opportuniste : parmi les héros qu'il peut attaquer le plus tôt, le plus isolé,
+                      blessé ou mal protégé ; s'il frappe sans avoir bougé, il se replie
+                      ensuite hors de portée des héros (gobelins) ;
+     - tactique     : accepte un tour de marche en plus pour viser le lanceur de sorts,
+                      le porteur d'un objet clé, le héros qui tient l'entrée de sa pièce
+                      ou un héros isolé (sorcier de la Terreur). */
+  const CIBLAGES = ['proche', 'menace', 'opportuniste', 'tactique'];
+  const CIBLAGE_PAR_TYPE = {
+    squelette: 'proche', zombie: 'proche', momie: 'proche',
+    gobelin: 'opportuniste',
+    orque: 'menace', guerrierEffroi: 'menace', abomination: 'menace', gargouille: 'menace',
+    sorcierEffroi: 'tactique',
+  };
+  function ciblageDe(g, monstre) {
+    const c = monstre.ciblage || g.quete.ciblageMonstres || CIBLAGE_PAR_TYPE[monstre.type];
+    return CIBLAGES.includes(c) ? c : 'proche';
+  }
+
+  // Ce qui rend un héros intéressant pour un monstre. infos(h) (facultatif, fourni par
+  // l'écran de jeu) donne { attaque, defense } avec l'équipement.
+  function profilHeros(g, etat, h, vivants, monstre, infos) {
+    const i = idx(g.L, h.x, h.y);
+    const inf = (infos && infos(h)) || {};
+    const autres = vivants.filter(k => k.id !== h.id);
+    const isole = !autres.some(k => Math.abs(k.x - h.x) + Math.abs(k.y - h.y) <= 2);
+    const blesse = Number.isFinite(h.corps) && Number.isFinite(h.corpsMax) && h.corps < h.corpsMax;
+    const defenses = vivants.map(k => ((infos && infos(k)) || {}).defense).filter(Number.isFinite);
+    const malProtege = Number.isFinite(inf.defense) && defenses.length > 1 && inf.defense === Math.min(...defenses);
+    const lanceur = ((etat.sorts || {})[h.id] || []).some(s => !s.utilise);
+    const cles = (g.quete.objetsCles || []).map(n => String(n).toLowerCase());
+    const porteCle = cles.length > 0 && (h.inventaire || []).some(o => cles.some(n => String(o.nom || '').toLowerCase().includes(n)));
+    // Sur une case d'une porte ouverte : il bloque un passage ; si c'est une porte de la
+    // pièce où se trouve le monstre, il en tient l'entrée.
+    const portes = (g.quete.portes || []).filter(p => (!p.secrete || (etat.secretesTrouvees || []).includes(p.id))
+      && (etat.portesOuvertes || []).includes(p.id) && [p.a, p.b].some(([x, y]) => x === h.x && y === h.y));
+    const zoneM = g.zones[idx(g.L, monstre.x, monstre.y)];
+    const tientPiece = estPiece(zoneM) && portes.some(p => [p.a, p.b].some(([x, y]) => g.zones[idx(g.L, x, y)] === zoneM));
+    // Couloir d'une case de large : au plus deux cases voisines praticables.
+    const etroit = g.zones[i] === '.' && voisins(g, i).filter(v => g.zones[v] !== '#' && ouvert(g, etat, i, v) && !meubleEn(g, v % g.L, Math.floor(v / g.L))).length <= 2;
+    return { isole, blesse, malProtege, lanceur, porteCle, tientPiece, bloque: portes.length > 0 || etroit, attaque: Number.isFinite(inf.attaque) ? inf.attaque : 0 };
+  }
+
+  // Parmi les héros atteignables (pas = nombre de pas jusqu'à une case d'où l'attaquer),
+  // celui que vise le monstre selon son ciblage. Renvoie l'id du héros.
+  function choisirCible(g, etat, monstre, portee, atteignables, vivants, infos) {
+    const tours = a => (a.pas <= portee ? 0 : Math.ceil((a.pas - portee) / Math.max(1, portee)));
+    const ordre = a => vivants.indexOf(a.h);
+    const parPas = (a, b) => a.pas - b.pas || ordre(a) - ordre(b);
+    const ciblage = ciblageDe(g, monstre);
+    if (ciblage === 'proche') return atteignables.slice().sort(parPas)[0].h.id;
+    const min = Math.min(...atteignables.map(tours));
+    const marge = ciblage === 'tactique' ? 1 : 0;
+    const candidats = atteignables.filter(a => tours(a) <= min + marge)
+      .map(a => ({ ...a, p: profilHeros(g, etat, a.h, vivants, monstre, infos) }));
+    const note = a => {
+      const p = a.p;
+      if (ciblage === 'menace') return (p.bloque ? 100 : 0) + p.attaque;
+      if (ciblage === 'opportuniste') return (p.isole ? 3 : 0) + (p.blesse ? 2 : 0) + (p.malProtege ? 2 : 0);
+      return (p.lanceur ? 3 : 0) + (p.porteCle ? 3 : 0) + (p.tientPiece ? 2 : 0) + (p.isole ? 2 : 0) + (p.blesse ? 1 : 0);
+    };
+    candidats.sort((a, b) => note(b) - note(a) || parPas(a, b));
+    return candidats[0].h.id;
+  }
+
+  // Plan d'un monstre : choisit sa cible (ciblage ci-dessus) parmi les héros vivants qu'il
+  // peut atteindre, puis avance vers la case libre la plus proche d'où l'attaquer
+  // (case voisine, sans mur entre eux).
   // Renvoie { chemin: [[x,y]…] (sans la case de départ), cible: id du héros ou null,
-  //           atteint: true si le monstre pourra attaquer ce tour-ci }.
-  function planMonstre(g, etat, monstre, portee) {
+  //           atteint: true si le monstre pourra attaquer ce tour-ci,
+  //           vise: id du héros choisi, même s'il ne l'atteint pas ce tour-ci,
+  //           repli: true si, après avoir frappé sans bouger, il se repliera (gobelins) }.
+  function planMonstre(g, etat, monstre, portee, infos = null) {
     const depart = idx(g.L, monstre.x, monstre.y);
     const vivants = etat.heros.filter(h => h.x != null && h.corps !== 0);
     const occupeeParMonstre = c => etat.monstres.some(m => m.id !== monstre.id && idx(g.L, m.x, m.y) === c);
-    // Héros qu'on peut attaquer depuis la case c (le plus faible d'abord).
     const attaquables = c => vivants
-      .filter(h => voisins(g, c).includes(idx(g.L, h.x, h.y)) && ouvert(g, etat, c, idx(g.L, h.x, h.y)))
-      .sort((a, b) => (a.corps ?? 99) - (b.corps ?? 99));
-
-    // Déjà au contact : pas de déplacement.
-    const ici = attaquables(depart);
-    if (ici.length) return { chemin: [], cible: ici[0].id, atteint: true };
+      .filter(h => voisins(g, c).includes(idx(g.L, h.x, h.y)) && ouvert(g, etat, c, idx(g.L, h.x, h.y)));
 
     const comportement = comportementDe(g, monstre);
-    if (comportement === 'garde') return { chemin: [], cible: null, atteint: false };
+    // « garde » : ne bouge jamais ; attaque seulement au contact.
+    if (comportement === 'garde') {
+      const ici = attaquables(depart);
+      if (!ici.length) return { chemin: [], cible: null, atteint: false };
+      const id = choisirCible(g, etat, monstre, 0, ici.map(h => ({ h, pas: 0, c: depart })), vivants, infos);
+      return { chemin: [], cible: id, atteint: true };
+    }
     // « piece » : zone de la case où la quête a posé le monstre (monstre errant : sa zone actuelle).
     const origine = (g.quete.monstres || []).find(q => q.id === monstre.id) || monstre;
     const zone = comportement === 'piece' ? g.zones[idx(g.L, origine.x, origine.y)] : null;
 
-    // Parcours en largeur : distance et case précédente pour chaque case atteignable.
+    // Parcours en largeur complet : pour chaque héros, la case d'attaque la plus proche.
     const precedent = new Map([[depart, null]]);
-    const file = [depart];
-    let but = null;
-    while (file.length) {
-      const c = file.shift();
-      if (c !== depart && !occupeeParMonstre(c) && attaquables(c).length) { but = c; break; }
+    const pas = new Map([[depart, 0]]);
+    const meilleur = new Map(); // id du héros → { h, pas, c }
+    for (let k = 0, file = [depart]; k < file.length; k++) {
+      const c = file[k];
+      if (c === depart || !occupeeParMonstre(c)) {
+        for (const h of attaquables(c)) if (!meilleur.has(h.id)) meilleur.set(h.id, { h, pas: pas.get(c), c });
+      }
       for (const v of voisins(g, c)) {
         if (precedent.has(v) || !passageMonstre(g, etat, c, v, zone)) continue;
         precedent.set(v, c);
+        pas.set(v, pas.get(c) + 1);
         file.push(v);
       }
     }
-    if (but === null) return planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre, zone);
+    if (!meilleur.size) return planRapprochement(g, etat, monstre, portee, vivants, occupeeParMonstre, zone);
 
+    const cible = choisirCible(g, etat, monstre, portee, [...meilleur.values()], vivants, infos);
+    const but = meilleur.get(cible).c;
     // Chemin complet, puis limité à la portée ; on recule si la case d'arrivée est occupée.
     const complet = [];
     for (let c = but; c !== depart; c = precedent.get(c)) complet.unshift(c);
@@ -359,12 +438,51 @@ const Plateau = (() => {
     while (n > 0 && occupeeParMonstre(complet[n - 1])) n--;
     const chemin = complet.slice(0, n);
     const arrivee = n ? chemin[n - 1] : depart;
-    const cibles = attaquables(arrivee);
+    const ici = attaquables(arrivee);
+    // Pas encore au contact de sa cible : il frappe en passant un autre héros à sa portée.
+    let id = ici.some(h => h.id === cible) ? cible : null;
+    if (!id && ici.length) id = choisirCible(g, etat, monstre, 0, ici.map(h => ({ h, pas: 0, c: arrivee })), vivants, infos);
     return {
       chemin: chemin.map(c => [c % g.L, Math.floor(c / g.L)]),
-      cible: cibles.length ? cibles[0].id : null,
-      atteint: cibles.length > 0,
+      cible: id,
+      atteint: !!id,
+      vise: cible,
+      repli: !!id && !chemin.length && ciblageDe(g, monstre) === 'opportuniste',
     };
+  }
+
+  // Repli après une attaque (gobelins) : dans la limite de son déplacement, le monstre
+  // gagne la case libre la plus éloignée des héros, hors de leur contact. Chemin vide
+  // s'il ne trouve aucune case hors de contact.
+  function planRepli(g, etat, monstre, portee) {
+    const depart = idx(g.L, monstre.x, monstre.y);
+    const vivants = etat.heros.filter(h => h.x != null && h.corps !== 0);
+    if (!vivants.length || portee <= 0) return [];
+    const comportement = comportementDe(g, monstre);
+    if (comportement === 'garde') return [];
+    const origine = (g.quete.monstres || []).find(q => q.id === monstre.id) || monstre;
+    const zone = comportement === 'piece' ? g.zones[idx(g.L, origine.x, origine.y)] : null;
+    const occupee = c => etat.monstres.some(m => m.id !== monstre.id && idx(g.L, m.x, m.y) === c);
+    const auContact = c => vivants.some(h => voisins(g, c).includes(idx(g.L, h.x, h.y)) && ouvert(g, etat, c, idx(g.L, h.x, h.y)));
+    const eloignement = c => Math.min(...vivants.map(h => Math.abs(h.x - c % g.L) + Math.abs(h.y - Math.floor(c / g.L))));
+    const precedent = new Map([[depart, null]]), pas = new Map([[depart, 0]]);
+    let meilleure = null;
+    for (let k = 0, file = [depart]; k < file.length; k++) {
+      const c = file[k];
+      if (c !== depart && !occupee(c) && !auContact(c)) {
+        if (meilleure === null || eloignement(c) > eloignement(meilleure)
+          || (eloignement(c) === eloignement(meilleure) && pas.get(c) < pas.get(meilleure))) meilleure = c;
+      }
+      if (pas.get(c) >= portee) continue;
+      for (const v of voisins(g, c)) {
+        if (precedent.has(v) || !passageMonstre(g, etat, c, v, zone)) continue;
+        precedent.set(v, c); pas.set(v, pas.get(c) + 1); file.push(v);
+      }
+    }
+    if (meilleure === null) return [];
+    const chemin = [];
+    for (let c = meilleure; c !== depart; c = precedent.get(c)) chemin.unshift([c % g.L, Math.floor(c / g.L)]);
+    return chemin;
   }
 
   // Distance « idéale » de chaque case au héros vivant le plus proche, comme si les
@@ -696,6 +814,11 @@ const Plateau = (() => {
       if (m.comportement != null && !COMPORTEMENTS.includes(m.comportement)) err.push(`monstre ${m.id} : comportement inconnu « ${m.comportement} » (${COMPORTEMENTS.join(', ')})`);
     }
     if (q.comportementMonstres != null && !COMPORTEMENTS.includes(q.comportementMonstres)) err.push(`comportementMonstres : valeur inconnue « ${q.comportementMonstres} » (${COMPORTEMENTS.join(', ')})`);
+    for (const m of q.monstres || []) {
+      if (m.ciblage != null && !CIBLAGES.includes(m.ciblage)) err.push(`monstre ${m.id} : ciblage inconnu « ${m.ciblage} » (${CIBLAGES.join(', ')})`);
+    }
+    if (q.ciblageMonstres != null && !CIBLAGES.includes(q.ciblageMonstres)) err.push(`ciblageMonstres : valeur inconnue « ${q.ciblageMonstres} » (${CIBLAGES.join(', ')})`);
+    if (q.objetsCles != null && !Array.isArray(q.objetsCles)) err.push('objetsCles : doit être une liste de noms d’objets');
     for (const p of q.pieges || []) {
       idUnique(p, 'piège');
       if (!['fosse', 'bloc', 'lance'].includes(p.type)) err.push(`piège ${p.id} : type inconnu « ${p.type} » (fosse, bloc ou lance)`);
@@ -759,6 +882,6 @@ const Plateau = (() => {
     return phrases;
   }
 
-  return { verserRecompenses, geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
+  return { verserRecompenses, geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, planRepli, comportementDe, COMPORTEMENTS, ciblageDe, CIBLAGES, CIBLAGE_PAR_TYPE, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
     passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
 })();
