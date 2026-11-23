@@ -96,6 +96,46 @@ const Plateau = (() => {
     return true;
   }
 
+  /* ---------- Trajectoire d'un tir (armes à distance, armes lancées, sorts) ----------
+     Règles de l'utilisateur (23/11/2026) : la ligne va du centre de la case du tireur au centre
+     de la case visée. Murs, portes fermées, éboulements et meubles l'arrêtent ; passer exactement
+     par un coin (de mur ou de meuble) est permis tant qu'un des deux côtés du coin est libre.
+     La première figurine rencontrée reçoit le tir, quelle qu'elle soit (interception).
+     occupees : Map numéro de case → figurine ({ genre, id }) ; la case du tireur n'y est pas.
+     Renvoie null si le tir est impossible, sinon le numéro de la case touchée.
+     (La ligne de vue du brouillard, plus haut, reste inchangée : les meubles n'y cachent rien.) */
+  function trajectoireTir(g, etat, ax, ay, bx, by, occupees = new Map()) {
+    let x = ax, y = ay;
+    const dx = bx - ax, dy = by - ay;
+    const sx = Math.sign(dx), sy = Math.sign(dy);
+    const pasX = dx !== 0 ? 1 / Math.abs(dx) : Infinity;
+    const pasY = dy !== 0 ? 1 / Math.abs(dy) : Infinity;
+    let prochainX = pasX / 2, prochainY = pasY / 2;
+    const meuble = i => !!meubleEn(g, i % g.L, Math.floor(i / g.L));
+    const passe = (i, j) => ouvert(g, etat, i, j) && !meuble(j);
+    while (x !== bx || y !== by) {
+      const avant = idx(g.L, x, y);
+      if (Math.abs(prochainX - prochainY) < 1e-9) {
+        const c1 = idx(g.L, x + sx, y), c2 = idx(g.L, x, y + sy), d = idx(g.L, x + sx, y + sy);
+        // Les murs se rejoignent au coin : la ligne passe entre deux côtés fermés.
+        const libre1 = ouvert(g, etat, avant, c1) && ouvert(g, etat, c1, d) && !meuble(c1);
+        const libre2 = ouvert(g, etat, avant, c2) && ouvert(g, etat, c2, d) && !meuble(c2);
+        if (!libre1 && !libre2) return null;
+        x += sx; y += sy; prochainX += pasX; prochainY += pasY;
+        if (meuble(d)) return null;
+      } else if (prochainX < prochainY) {
+        if (!passe(avant, idx(g.L, x + sx, y))) return null;
+        x += sx; prochainX += pasX;
+      } else {
+        if (!passe(avant, idx(g.L, x, y + sy))) return null;
+        y += sy; prochainY += pasY;
+      }
+      const ici = idx(g.L, x, y);
+      if (occupees.has(ici)) return ici;
+    }
+    return idx(g.L, bx, by);
+  }
+
   /* ---------- Brouillard de guerre ---------- */
 
   // Ajoute à etat.revele tout ce que les héros voient maintenant. Ce qui a été
@@ -680,6 +720,6 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
+  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, herosAdjacent, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
     passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
 })();

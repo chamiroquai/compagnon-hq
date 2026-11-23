@@ -424,7 +424,9 @@ const VuePlateau = (() => {
         // Cibles entourées : monstres attaquables (attaque normale) ou tout monstre en vue (Djinn).
         const visableSort = sortCible && !vueMJ && ciblesSort(sortCible).monstres.some(c => c.id === m.id);
         const visableCible = (ciblage && ciblesAttaque().some(c => c.id === m.id)) || (djinnMonstreChoix && !vueMJ && vu.has(Plateau.idx(L, m.x, m.y))) || visableSort;
-        const horsVueSort = visableSort && !Sorts.sort(sortCible).partout && !cibleVisible(herosActif(), m);
+        // Pointillés : cible qu'une autre figurine interceptera (sort ou tir).
+        const horsVueSort = (visableSort && !Sorts.sort(sortCible).partout && intercepte(herosActif(), m))
+          || (ciblage && visableCible && intercepte(herosActif(), m));
         const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : '') + (horsVueSort ? ' hors-vue' : ''), 'data-monstre': m.id }, svg);
         el('rect', { x: m.x * T + 3, y: m.y * T + 3, width: T - 6, height: T - 6, rx: 5 }, gr);
         el('title', {}, gr).textContent = m.nom || infoMonstre(m.type).nom;
@@ -468,7 +470,7 @@ const VuePlateau = (() => {
       for (const h of etat.heros) {
         if (h.x == null) continue;
         const cibleS = sortCible && !vueMJ && ciblesSort(sortCible).heros.some(k => k.id === h.id);
-        const horsVueS = cibleS && !Sorts.sort(sortCible).partout && h.id !== actif?.id && !cibleVisible(actif, h);
+        const horsVueS = cibleS && !Sorts.sort(sortCible).partout && h.id !== actif?.id && intercepte(actif, h);
         const cls = 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '') + (h.corps === 0 ? ' a-terre' : '')
           + (cibleS ? ' cible-sort' : '') + (horsVueS ? ' hors-vue' : '');
         const gr = el('g', { class: cls, 'data-heros': h.id }, svg);
@@ -1125,24 +1127,39 @@ const VuePlateau = (() => {
     let combat = null;    // { monstre, ambiance } : duel ouvert, on attend les crânes du héros
     let conclusion = null; // résultat d'un duel, affiché jusqu'à « Suivant »
 
-    /* Façon dont le héros h peut attaquer le monstre m avec l'arme en main (v0.30.0) :
+    /* Façon dont le héros h peut attaquer le monstre m avec l'arme en main (v0.30.0, règles du 23/11/2026) :
        - 'contact' : case voisine (sans diagonale), sans mur ni porte fermée entre les deux ;
        - 'diagonale' : arme « diagonale », case voisine en diagonale (même règle de coin que la ligne de vue) ;
-       - 'tir' : arme « à distance », monstre en vue (les figurines bloquent la ligne, comme pour les sorts) ;
-       - 'lancer' : arme « se lance », monstre en vue mais pas voisin ; l'arme est perdue ;
-       - 'tirVoisin' : arme seulement « à distance » contre un monstre voisin : interdit par la règle,
-         l'application avertit sans bloquer (principe d'arbitrage).
-       null : pas attaquable. Un monstre voisin en diagonale n'est pas « voisin » pour l'arbalète. */
+       - 'tir' : arme « à distance » (ne s'utilise pas sur une case adjacente, diagonale comprise) ;
+       - 'lancer' : arme « se lance » sur un monstre qui n'est pas au contact ; l'arme est perdue.
+       Tir et lancer suivent la trajectoire de tir (voir tir()) : sans trajectoire libre, pas d'attaque ;
+       une figurine sur la trajectoire reçoit le coup. null : pas attaquable. */
     function modeAttaque(h, m) {
       if (!h || !etat.revele.includes(Plateau.idx(L, m.x, m.y))) return null;
       const a = armeEnMain(h) || {};
       const dx = Math.abs(m.x - h.x), dy = Math.abs(m.y - h.y);
-      if (dx + dy === 1 && Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, m.x, m.y)))
-        return a.distance && !a.lancer ? 'tirVoisin' : 'contact';
-      if (dx === 1 && dy === 1 && a.diagonale && Plateau.ligneDeVue(g, etat, h.x, h.y, m.x, m.y)) return 'diagonale';
-      if ((a.distance || a.lancer) && cibleVisible(h, m)) return a.distance ? 'tir' : 'lancer';
+      const adjacent = Math.max(dx, dy) === 1;
+      if (a.distance && !a.lancer) return !adjacent && tir(h, m) ? 'tir' : null;
+      if (dx + dy === 1) return Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, m.x, m.y)) ? 'contact' : null;
+      if (adjacent && a.diagonale && Plateau.ligneDeVue(g, etat, h.x, h.y, m.x, m.y)) return 'diagonale';
+      if (a.lancer && tir(h, m)) return 'lancer';
+      if (a.distance && !adjacent && tir(h, m)) return 'tir';
       return null;
     }
+
+    /* Trajectoire d'un tir (arme ou sort) du tireur f vers la cible c (Plateau.trajectoireTir).
+       Renvoie null si le tir est impossible (cible non dévoilée, mur, meuble…), sinon
+       { genre, id } de la figurine qui reçoit le tir (la cible, ou celle qui l'intercepte). */
+    function tir(f, c) {
+      if (!etat.revele.includes(Plateau.idx(L, c.x, c.y))) return null;
+      const occupees = new Map();
+      for (const k of etat.heros) if (k.x != null && !k.mort && k.id !== f.id) occupees.set(Plateau.idx(L, k.x, k.y), { genre: 'heros', id: k.id });
+      for (const k of etat.monstres) if (k.id !== f.id) occupees.set(Plateau.idx(L, k.x, k.y), { genre: 'monstre', id: k.id });
+      const i = Plateau.trajectoireTir(g, etat, f.x, f.y, c.x, c.y, occupees);
+      return i === null ? null : occupees.get(i) || null;
+    }
+    const intercepte = (f, c) => { const t = tir(f, c); return !!t && t.id !== c.id; };
+    const nomFigurine = t => t.genre === 'heros' ? etat.heros.find(k => k.id === t.id)?.nom : infoMonstre(etat.monstres.find(k => k.id === t.id)?.type).nom;
     // Monstres que le héros actif peut attaquer.
     function ciblesAttaque() {
       const h = herosActif();
@@ -1180,11 +1197,40 @@ const VuePlateau = (() => {
       ciblage = false;
       const h = herosActif(), mode = modeAttaque(h, m), a = armeEnMain(h);
       const alertes = [];
-      if (mode === 'tirVoisin') alertes.push(`⚠ Règle : « ${a.nom} » ne s’utilise pas contre un monstre voisin. Vous pouvez continuer.`);
       if (Inventaire.interditeA(a, h.classe || h.id)) alertes.push(`⚠ Règle : « ${a.nom} » ne peut pas servir à ${h.nom}. Vous pouvez continuer.`);
       if ((etat.tour.actions || 0) >= 1) alertes.unshift(`⚠ ${h.nom} a déjà fait une action ce tour-ci (règle : une seule action par tour). Vous pouvez continuer.`);
       if (alertes.length) msg(...alertes.slice(0, 2));
-      combat = { monstre: id, mode, arme: a?.nom || null, ambiance: Ambiance.tirer('attaqueHeros', { heros: h.nom, monstre: infoMonstre(m.type).nom }) };
+      // Tir ou lancer : la première figurine sur la trajectoire reçoit le coup.
+      const touche = mode === 'tir' || mode === 'lancer' ? tir(h, m) : { genre: 'monstre', id };
+      const intercept = touche.id !== id ? `${infoMonstre(m.type).nom} était visé, mais ${nomFigurine(touche)} est sur la trajectoire et reçoit le coup.` : '';
+      if (touche.genre === 'heros') {
+        evenement = { genre: 'tirHeros', heros: touche.id, mode, arme: a?.nom || '', intercept, ambiance: Ambiance.tirer('attaqueHeros', { heros: h.nom, monstre: nomFigurine(touche) }) };
+        return dessiner();
+      }
+      const victime = etat.monstres.find(k => k.id === touche.id);
+      if (touche.id !== id && Regles.valeurMonstre(caracs, victime, 'defense') === null)
+        return msg(`${intercept} Sa défense est inconnue : corrigez en vue MJ ou dans Réglages › Caractéristiques.`);
+      combat = { monstre: touche.id, mode, arme: a?.nom || null, intercept, ambiance: Ambiance.tirer('attaqueHeros', { heros: h.nom, monstre: infoMonstre(victime.type).nom }) };
+      dessiner();
+    }
+
+    // Tir ou arme lancée qui touche un héros (interception) : crânes du tireur moins boucliers blancs du héros touché.
+    function resoudreTirHeros(cranes, blancs) {
+      const ev = evenement, h = herosActif();
+      const v = etat.heros.find(k => k.id === ev.heros);
+      const degats = Math.max(0, cranes - blancs);
+      let vie = v.corps;
+      modifier(e => {
+        if (e.tour.deplacement) e.tour.deplacement = null;
+        e.tour.actions = (e.tour.actions || 0) + 1;
+        if (ev.mode === 'lancer') { const kh = e.heros.find(z => z.id === h.id), t = Inventaire.tri(kh.inventaire || []); if (t.arme) kh.inventaire.splice(t.arme.k, 1); }
+        vie = blesser(e, v.id, degats);
+      });
+      const texte = (cranes === 0 ? 'Aucun crâne : le coup ne fait rien.'
+        : `${cranes} crâne${cranes > 1 ? 's' : ''} contre ${blancs} bouclier${blancs > 1 ? 's' : ''} blanc${blancs > 1 ? 's' : ''} : `
+          + (degats ? `${v.nom} perd ${degats} point${degats > 1 ? 's' : ''} de Vie (reste ${vie}).` : 'aucune blessure.'))
+        + (ev.mode === 'lancer' ? ` « ${ev.arme} » est perdue.` : '');
+      evenement = { genre: 'fin', titre: `${v.nom} est touché`, texte };
       dessiner();
     }
 
@@ -1693,6 +1739,21 @@ const VuePlateau = (() => {
         ${ev.avertissement ? `<p class="erreur petit">${echapperTexte(ev.avertissement)}</p>` : ''}
         <p class="question">${echapperTexte(ev.question)}</p>
         <div class="choix">${ev.reponses.map(([v, t]) => `<button data-reponse-sort="${v}">${t}</button>`).join('')}</div>`;
+      if (ev.genre === 'tirHeros') {
+        const v = etat.heros.find(k => k.id === ev.heros);
+        const n = caracHeros(h, 'attaque'), d = caracHeros(v, 'defense');
+        const quoi = ev.mode === 'lancer' ? `« ${ev.arme} » lancée` : `Tir de « ${ev.arme} »`;
+        return `<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
+            ${figurine('droite', Portraits.heros(v.id, v.court), v.nom, v.corps, v.corpsMax, 'defenseur')}</div>
+          <p class="titre-zargon">${echapperTexte(quoi)} : ${echapperTexte(v.nom)} est touché !</p>
+          ${ev.intercept ? `<p class="erreur petit">${echapperTexte(ev.intercept)}</p>` : ''}
+          ${ev.cranes == null
+            ? `<p class="question">${echapperTexte(h.nom)} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat. Combien de crânes ?</p>
+               <div class="choix nombres">${boutonsNombre(n, 'tir-cranes')}</div>`
+            : `<p class="question">${ev.cranes} crâne${ev.cranes > 1 ? 's' : ''}. ${echapperTexte(v.nom)} : lancez ${d ?? 'vos'} dé${d > 1 ? 's' : ''} de défense. Combien de boucliers blancs ?</p>
+               <div class="choix nombres">${boutonsNombre(d, 'tir-blancs')}</div>`}
+          <div class="choix"><button id="ev-annuler">Annuler</button></div>`;
+      }
       if (ev.genre === 'reveil') return `${tete}<p class="titre-zargon">${echapperTexte(h.nom)} est endormi</p>
         <p class="question">Lancez 1 dé à six faces : avez-vous fait 6 ?</p>
         <div class="choix"><button data-reveil="1" class="principal">Oui, 6 : réveillé</button><button data-reveil="0">Non</button></div>`;
@@ -1787,6 +1848,12 @@ const VuePlateau = (() => {
         lancerSort(evenement.sort, { genre, id });
       }));
       boite.querySelectorAll('[data-reponse-sort]').forEach(b => b.addEventListener('click', () => repondreSort(b.dataset.reponseSort)));
+      boite.querySelectorAll('[data-tir-cranes]').forEach(b => b.addEventListener('click', () => {
+        const c = +b.dataset.tirCranes;
+        if (c === 0) return resoudreTirHeros(0, 0);
+        evenement = { ...evenement, cranes: c }; dessiner();
+      }));
+      boite.querySelectorAll('[data-tir-blancs]').forEach(b => b.addEventListener('click', () => resoudreTirHeros(evenement.cranes, +b.dataset.tirBlancs)));
       boite.querySelector('#djinn-choisir-monstre')?.addEventListener('click', () => {
         evenement = null; djinnMonstreChoix = true;
         msg('Djinn : touchez le monstre à attaquer (entouré de rouge), où qu’il soit.');
@@ -1829,15 +1896,6 @@ const VuePlateau = (() => {
       return e;
     }
 
-    // Une cible est-elle visible depuis le lanceur ? (les autres figurines bloquent la ligne)
-    function cibleVisible(lanceur, f) {
-      if (f.x === lanceur.x && f.y === lanceur.y) return true;
-      if (!etat.revele.includes(Plateau.idx(L, f.x, f.y))) return false;
-      const obstacles = new Set([...etat.heros.filter(h => h.x != null), ...etat.monstres].map(k => Plateau.idx(L, k.x, k.y)));
-      obstacles.delete(Plateau.idx(L, lanceur.x, lanceur.y));
-      return Plateau.ligneDeVue(g, etat, lanceur.x, lanceur.y, f.x, f.y, obstacles);
-    }
-
     function choisirSort(id) {
       const s = Sorts.sort(id);
       fenetreActions = null;
@@ -1845,7 +1903,7 @@ const VuePlateau = (() => {
       // Les autres sorts : la cible se touche sur le plateau (comme une attaque).
       evenement = null; sortCible = id;
       const qui = s.cible === 'heros' ? 'le héros visé (lanceur compris)' : s.cible === 'monstre' ? 'le monstre visé' : 'le héros ou le monstre visé';
-      msg(`${Sorts.groupe(s.groupe).symbole} ${s.nom} : ${s.resume}`, `Touchez ${qui}. Une cible hors de vue (pointillés) reçoit le sort avec un avertissement.`);
+      msg(`${Sorts.groupe(s.groupe).symbole} ${s.nom} : ${s.resume}`, s.partout ? `Touchez ${qui}.` : `Touchez ${qui}. En pointillés : une autre figurine est sur la trajectoire et recevra le sort.`);
       dessiner();
     }
 
@@ -1861,12 +1919,31 @@ const VuePlateau = (() => {
       const h = herosActif(), s = Sorts.sort(id);
       const amb = Ambiance.tirer('sort', { heros: h.nom });
       const titre = `${s.nom}`;
+      // Trajectoire (règles du 23/11/2026) : sauf sur soi-même et pour les sorts « n'importe où »,
+      // le sort suit la trajectoire de tir ; impossible si elle est bloquée ; la première figurine
+      // rencontrée le reçoit (option a : sorts d'aide compris).
+      let intercept = '';
+      if (!s.partout && cible.id !== h.id) {
+        const v0 = cible.genre === 'heros' ? etat.heros.find(k => k.id === cible.id) : etat.monstres.find(k => k.id === cible.id);
+        const t = tir(h, v0);
+        if (!t) return msg(`${s.nom} : la cible n’est pas atteignable (mur, porte ou meuble sur la trajectoire).`);
+        if (t.id !== cible.id) {
+          intercept = `${nomFigurine(cible)} était visé, mais ${nomFigurine(t)} est sur la trajectoire et reçoit le sort.`;
+          cible = t;
+          // Sort réservé aux héros qui atteint un monstre : il se perd.
+          if (s.cible === 'heros' && t.genre === 'monstre') {
+            modifier(e => consommerSort(e, h.id, id));
+            evenement = { genre: 'fin', titre, ambiance: amb, avertissement: '⚠ ' + intercept, texte: `Le sort se dissipe sans effet sur ${nomFigurine(t)}.` };
+            return dessiner();
+          }
+        }
+      }
       const visee = cible.genre === 'heros' ? etat.heros.find(k => k.id === cible.id) : etat.monstres.find(k => k.id === cible.id);
       const nomC = cible.genre === 'heros' ? visee.nom : infoMonstre(visee.type).nom;
       const avert = [];
-      if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
-      if (!s.partout && !cibleVisible(h, visee)) avert.push(`${nomC} n’est pas en vue.`);
-      const avertissement = avert.length ? '⚠ ' + avert.join(' ') + ' (Sort lancé quand même.)' : '';
+      if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci (sort lancé quand même).`);
+      if (intercept) avert.push(intercept);
+      const avertissement = avert.length ? '⚠ ' + avert.join(' ') : '';
       const fin = (texte, extra = {}) => { evenement = { genre: 'fin', titre, ambiance: amb, avertissement, texte, ...extra }; dessiner(); };
       const surHeros = f => modifier(e => { consommerSort(e, h.id, id); f(e.heros.find(k => k.id === cible.id), e); });
       const surMonstre = f => modifier(e => { consommerSort(e, h.id, id); f(e.monstres.find(k => k.id === cible.id), e); });
@@ -1992,11 +2069,13 @@ const VuePlateau = (() => {
 
     // Cibles possibles d'un sort sur le plateau : héros debout et/ou monstres en vue.
     function ciblesSort(id) {
-      const s = Sorts.sort(id);
+      const s = Sorts.sort(id), h = herosActif();
       const vu = new Set(etat.revele);
+      // Cible atteignable : soi-même, sort « n'importe où », ou trajectoire libre (peut-être interceptée).
+      const ok = f => s.partout || (h && f.id === h.id) || !!tir(h, f);
       return {
-        heros: s.cible === 'monstre' ? [] : etat.heros.filter(k => k.x != null && k.corps !== 0 && !k.mort),
-        monstres: s.cible === 'heros' ? [] : etat.monstres.filter(m => vu.has(Plateau.idx(L, m.x, m.y))),
+        heros: s.cible === 'monstre' ? [] : etat.heros.filter(k => k.x != null && k.corps !== 0 && !k.mort && ok(k)),
+        monstres: s.cible === 'heros' ? [] : etat.monstres.filter(m => vu.has(Plateau.idx(L, m.x, m.y)) && ok(m)),
       };
     }
 
@@ -2006,8 +2085,9 @@ const VuePlateau = (() => {
       const heros = s.cible === 'monstre' ? [] : etat.heros.filter(k => k.x != null && k.corps !== 0);
       const monstres = s.cible === 'heros' ? [] : etat.monstres.filter(m => vu.has(Plateau.idx(L, m.x, m.y)));
       const bouton = (genre, f, nom) => {
-        const hv = !s.partout && !cibleVisible(h, f);
-        return `<button data-cible-sort="${genre}:${f.id}">${echapperTexte(nom)}${f.id === h.id ? ' (soi-même)' : ''}${hv ? ' — hors de vue ⚠' : ''}</button>`;
+        const hv = !s.partout && f.id !== h.id && intercepte(h, f);
+        if (!s.partout && f.id !== h.id && !tir(h, f)) return '';
+        return `<button data-cible-sort="${genre}:${f.id}">${echapperTexte(nom)}${f.id === h.id ? ' (soi-même)' : ''}${hv ? ' — interceptée ⚠' : ''}</button>`;
       };
       return `<p class="titre-zargon">${Sorts.groupe(s.groupe).symbole} ${s.nom}</p>
         <p class="discret">${s.resume}</p>
@@ -2156,6 +2236,7 @@ const VuePlateau = (() => {
         html = `${combat.djinn ? '<p class="titre-zargon">🌪 Le Djinn attaque !</p>' : ''}<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
             ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'defenseur')}</div>
           <p class="ambiance">${echapperTexte(combat.ambiance)}</p>
+          ${combat.intercept ? `<p class="erreur petit">${echapperTexte(combat.intercept)}</p>` : ''}
           ${combat.mode && combat.mode !== 'contact' ? `<p class="mode-attaque">${echapperTexte(
             combat.mode === 'diagonale' ? `En diagonale, avec « ${combat.arme} ».`
             : combat.mode === 'tir' ? `Tir à distance avec « ${combat.arme} ».`
