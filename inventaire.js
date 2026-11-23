@@ -102,6 +102,21 @@ const Inventaire = (() => {
       <button class="petit-bouton" data-inv-prendre="">Dans le sac</button></div>`;
   }
 
+  /* v0.39.0 — Description d'un objet (demande de l'utilisateur du 23/11/2026) : champ « texte »
+     (carte trésor, trésor de quête ou saisie « Description… »). Une potion sans description
+     ni valeur de soin le signale, pour qu'on sache que son effet reste à décider. */
+  const SOIN_TOTAL = 99; // « soin » ≥ 99 : la potion rend tous les points de Vie de départ
+  const TEXTE_MAX = 300;
+  function description(o, bloc = false) {
+    const t = typeof o?.texte === 'string' ? o.texte.trim() : '';
+    const cls = `description-inv discret petit${bloc ? ' pleine-largeur' : ''}`;
+    if (t) return `<span class="${cls}">${esc(t)}</span>`;
+    if (estPotion(o) && !Number.isFinite(o.soin)) return `<span class="${cls}">Effet non indiqué (« Description… » pour le noter).</span>`;
+    return '';
+  }
+
+  const boutonDecrire = (o, k) => `<button class="petit-bouton" data-inv-decrire="${k}" data-inv-nom="${esc(o.nom)}" data-inv-texte="${esc(o.texte || '')}">Description…</button>`;
+
   /* HTML des trois blocs. options : { lectureSeule, peutBoire, classe } */
   function html(inv = [], { lectureSeule = false, peutBoire = false, classe = null } = {}) {
     const { arme, armures, autres } = tri(inv);
@@ -115,7 +130,7 @@ const Inventaire = (() => {
       <div class="bloc-inv">
         <h4>Arme active <span class="discret petit">· ses dés remplacent les dés d’attaque</span></h4>
         ${arme ? `<div class="ligne-inv">${champs(arme.o, arme.k, 'Dés d’attaque', 'Note', true)}
-            ${boutons(arme.k, [`<button class="petit-bouton" data-inv-ranger="${arme.k}">Ranger</button>`])}</div>`
+            ${boutons(arme.k, [boutonDecrire(arme.o, arme.k), `<button class="petit-bouton" data-inv-ranger="${arme.k}">Ranger</button>`])}${description(arme.o, true)}</div>`
           : '<p class="discret petit">Aucune arme en main.</p>'}
         ${avert.map(t => `<p class="erreur petit">${t}</p>`).join('')}
         ${lectureSeule ? '' : `${choixArmurerie()}<button class="petit-bouton" data-inv-ajouter="arme">Autre arme en main…</button>`}
@@ -123,15 +138,16 @@ const Inventaire = (() => {
       <div class="bloc-inv">
         <h4>Armure <span class="discret petit">· ${bonus ? `+${bonus} dé${bonus > 1 ? 's' : ''} de défense au total` : 'ses bonus s’ajoutent aux dés de défense'}</span></h4>
         ${armures.length ? armures.map(({ o, k }) => `<div class="ligne-inv">${champs(o, k, 'Défense +', 'Note')}
-            ${boutons(k, [`<button class="petit-bouton" data-inv-ranger="${k}">Ôter</button>`])}</div>`).join('')
+            ${boutons(k, [boutonDecrire(o, k), `<button class="petit-bouton" data-inv-ranger="${k}">Ôter</button>`])}${description(o, true)}</div>`).join('')
           : '<p class="discret petit">Aucune pièce d’armure.</p>'}
         ${lectureSeule ? '' : '<button class="petit-bouton" data-inv-ajouter="armure">Ajouter une pièce d’armure…</button>'}
       </div>
       <div class="bloc-inv">
         <h4>Autres objets</h4>
         ${autres.length ? `<ul class="inventaire">${autres.map(({ o, k }) => `<li>
-            <span>${esc(o.nom)}${Number.isFinite(o.soin) ? ` <span class="discret petit">(+${o.soin} Vie)</span>` : ''}${Number.isFinite(o.des) && !o.emplacement ? ` <span class="discret petit">· ${o.des} dé${o.des > 1 ? 's' : ''}</span>` : ''}${etiquettes(o).length ? ` <span class="discret petit">· ${etiquettes(o).join(', ').toLowerCase()}</span>` : ''}${o.note ? ` <span class="discret petit">· ${esc(o.note)}</span>` : ''}</span>
+            <span>${esc(o.nom)}${Number.isFinite(o.soin) && o.soin > 0 ? ` <span class="discret petit">(${o.soin >= SOIN_TOTAL ? 'toute la Vie' : `+${o.soin} Vie`})</span>` : ''}${Number.isFinite(o.des) && !o.emplacement ? ` <span class="discret petit">· ${o.des} dé${o.des > 1 ? 's' : ''}</span>` : ''}${etiquettes(o).length ? ` <span class="discret petit">· ${etiquettes(o).join(', ').toLowerCase()}</span>` : ''}${o.note ? ` <span class="discret petit">· ${esc(o.note)}</span>` : ''}${description(o)}</span>
             ${boutons(k, [
+              boutonDecrire(o, k),
               peutBoire && estPotion(o) ? `<button class="petit-bouton" data-boire="${k}">Boire</button>` : '',
               estPotion(o) ? '' : `<button class="petit-bouton" data-inv-equiper="${k}">En main</button>`,
               estPotion(o) ? '' : `<button class="petit-bouton" data-inv-porter="${k}">Porter</button>`,
@@ -168,6 +184,16 @@ const Inventaire = (() => {
         inv.push(depuisArmurerie(a, empl));
       });
     }));
+    racine.querySelectorAll('[data-inv-decrire]').forEach(b => b.addEventListener('click', () => {
+      const v = prompt(`Description de « ${b.dataset.invNom} » (effet, règle de la carte…) :`, b.dataset.invTexte || '');
+      if (v === null) return;
+      changer(inv => {
+        const o = inv[+b.dataset.invDecrire];
+        if (!o) return;
+        const t = v.trim().slice(0, TEXTE_MAX);
+        if (t) o.texte = t; else delete o.texte;
+      });
+    }));
     racine.querySelectorAll('[data-inv-ranger]').forEach(b => b.addEventListener('click', () =>
       changer(inv => { delete inv[+b.dataset.invRanger].emplacement; })));
     racine.querySelectorAll('[data-inv-equiper]').forEach(b => b.addEventListener('click', () =>
@@ -191,6 +217,6 @@ const Inventaire = (() => {
     }));
   }
 
-  return { tri, html, brancher, bonusArmure, bouclierInutile, estPotion, estBouclier, CAPACITES, etiquettes, interditeA,
+  return { tri, html, brancher, description, SOIN_TOTAL, TEXTE_MAX, bonusArmure, bouclierInutile, estPotion, estBouclier, CAPACITES, etiquettes, interditeA,
     nettoyerArme, definirArmurerie, armurerie, depuisArmurerie };
 })();

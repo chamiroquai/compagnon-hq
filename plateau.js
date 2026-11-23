@@ -319,6 +319,15 @@ const Plateau = (() => {
     const v = q?.inerteJusqua;
     return v == null ? [] : Array.isArray(v) ? v : [v];
   }
+  // Objet d'inventaire tiré d'un trésor de quête (v0.39.0) : un nom, ou { nom, texte, soin, potion }.
+  function objetDeTresor(o) {
+    if (typeof o === 'string') return { nom: o };
+    const r = { nom: String(o?.nom || 'Objet').slice(0, 80) };
+    if (typeof o?.texte === 'string' && o.texte.trim()) r.texte = o.texte.trim().slice(0, 300);
+    if (Number.isInteger(o?.soin)) { r.soin = Math.max(0, Math.min(99, o.soin)); r.potion = true; }
+    if (o?.potion === true) r.potion = true;
+    return r;
+  }
   function inerte(g, etat, monstre) {
     const ids = portesEveil(g, monstre);
     return ids.length > 0 && !ids.some(id => (etat.portesOuvertes || []).includes(id));
@@ -922,6 +931,17 @@ const Plateau = (() => {
       if (t.active != null && !Array.isArray(t.active)) err.push(`interrupteur ${t.id} : « active » doit être une liste`);
       for (const c of Array.isArray(t.active) ? t.active : []) if (!cibles.has(c)) err.push(`interrupteur ${t.id} : « ${c} » n’est ni un passage ni une porte secrète`);
     }
+    // Objets d'un trésor (v0.39.0) : un nom, ou { nom, texte, soin, potion }.
+    for (const [piece, t] of Object.entries(q.tresors || {})) {
+      if (t?.objets == null) continue;
+      if (!Array.isArray(t.objets)) { err.push(`trésor ${piece} : « objets » doit être une liste`); continue; }
+      t.objets.forEach((o, i) => {
+        if (typeof o === 'string') { if (!o.trim()) err.push(`trésor ${piece} : objet ${i + 1} sans nom`); return; }
+        if (!o || typeof o !== 'object' || typeof o.nom !== 'string' || !o.nom.trim()) return err.push(`trésor ${piece} : objet ${i + 1} sans nom`);
+        if (o.texte != null && typeof o.texte !== 'string') err.push(`trésor ${piece} : « ${o.nom} » : « texte » doit être un texte`);
+        if (o.soin != null && !(Number.isInteger(o.soin) && o.soin >= 0 && o.soin <= 99)) err.push(`trésor ${piece} : « ${o.nom} » : « soin » doit être un entier de 0 à 99`);
+      });
+    }
     // Trésor qui révèle des passages ou portes secrètes (v0.38.0).
     for (const [piece, t] of Object.entries(q.tresors || {})) {
       if (t?.active == null) continue;
@@ -1021,5 +1041,5 @@ const Plateau = (() => {
   }
 
   return { verserRecompenses, objetsDe, objetsPortes, objetsAPortee, synchroniserObjets, etatObjets, bilanObjets, desPort, geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, planRepli, comportementDe, COMPORTEMENTS, ciblageDe, CIBLAGES, CIBLAGE_PAR_TYPE, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
-    passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, activerCibles, inerte, HEROS };
+    passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, activerCibles, inerte, objetDeTresor, HEROS };
 })();

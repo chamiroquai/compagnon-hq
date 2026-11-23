@@ -1859,7 +1859,7 @@ const VuePlateau = (() => {
           e.tresorsPris.push(piece);
           const k = e.heros.find(z => z.id === h.id);
           if (t.or) k.or = (k.or || 0) + t.or;
-          for (const o of t.objets || []) (k.inventaire = k.inventaire || []).push({ nom: o });
+          for (const o of t.objets || []) (k.inventaire = k.inventaire || []).push(Plateau.objetDeTresor(o));
           tresor = t;
           // Trésor qui révèle des passages ou portes secrètes (v0.38.0).
           if (Array.isArray(t.active)) revele = Plateau.activerCibles(g, e, t.active);
@@ -1871,7 +1871,7 @@ const VuePlateau = (() => {
             + (degats ? ` ${h.nom} perd ${degats} point${degats > 1 ? 's' : ''} de Vie (reste ${vie}).` : '') + ' Son tour s’arrête ; pas de trésor cette fois.' };
       } else if (tresor) {
         evenement = { genre: 'fin', titre: 'Trésor !', avertissement, ambiance: Ambiance.tirer('tresorTrouve', { heros: h.nom }),
-          texte: [tresor.texte, tresor.or ? `+${tresor.or} pièces d’or.` : '', (tresor.objets || []).length ? `Dans l’inventaire : ${tresor.objets.join(', ')}.` : '',
+          texte: [tresor.texte, tresor.or ? `+${tresor.or} pièces d’or.` : '', (tresor.objets || []).length ? `Dans l’inventaire : ${tresor.objets.map(o => Plateau.objetDeTresor(o).nom).join(', ')}.` : '',
             revele?.passages.length ? (revele.passages.length > 1 ? `${revele.passages.length} passages secrets s’ouvrent.` : 'Un passage secret s’ouvre.') : '',
             revele?.portes.length ? (revele.portes.length > 1 ? `${revele.portes.length} portes secrètes apparaissent.` : 'Une porte secrète apparaît.') : ''].filter(Boolean).join(' ') };
       } else {
@@ -1910,10 +1910,10 @@ const VuePlateau = (() => {
       }
       if (carte.type === 'potion' || carte.type === 'objet') {
         const objet = { nom: carte.nom || 'Objet' };
+        if (carte.texte) objet.texte = carte.texte; // description, pour les potions comme pour les objets (v0.39.0)
         if (carte.type === 'potion') {
           objet.potion = true;
           if (Number.isFinite(carte.valeur)) objet.soin = carte.valeur;
-          if (carte.texte) objet.texte = carte.texte;
         }
         modifier(e => { const k = e.heros.find(z => z.id === h.id); (k.inventaire = k.inventaire || []).push(objet); });
         return finCarte(titre, `${texte}« ${carte.nom || 'Objet'} » ajouté à l’inventaire de ${h.nom}.`);
@@ -2824,7 +2824,7 @@ const VuePlateau = (() => {
       return `${tete}
         <p class="resultat">Plus aucun point de Vie : ${echapperTexte(h.nom)} meurt, sauf s’il est sauvé tout de suite par une potion ou un sort de soin.</p>
         ${potions.length || soins.length ? `<div class="choix">
-          ${potions.map(({ o, k }) => `<button data-boire-secours="${k}" class="principal">Boire : ${echapperTexte(o.nom)}${Number.isFinite(o.soin) ? ` (+${o.soin})` : ''}</button>`).join('')}
+          ${potions.map(({ o, k }) => `<button data-boire-secours="${k}" class="principal">Boire : ${echapperTexte(o.nom)}${Number.isFinite(o.soin) ? (o.soin >= Inventaire.SOIN_TOTAL ? ' (toute la Vie)' : ` (+${o.soin})`) : ''}</button>`).join('')}
           ${soins.map(({ l, id }) => `<button data-soin="${l.id}:${id}">${echapperTexte(Sorts.sort(id).nom)} (${echapperTexte(l.nom)})</button>`).join('')}
         </div>` : '<p class="discret">Aucune potion dans son inventaire, aucun sort de soin disponible.</p>'}
         ${!vivants ? '<p class="erreur">Plus aucun héros debout : la quête est perdue s’il meurt.</p>' : ''}
@@ -2917,7 +2917,7 @@ const VuePlateau = (() => {
         const k = +b.dataset.boire, o = h.inventaire[k];
         let valeur = o.soin;
         if (!Number.isFinite(valeur)) {
-          const r = prompt(`Combien de points de Vie rend « ${o.nom} » ? (voir la carte ; 0 si son effet est autre)`, '0');
+          const r = prompt(`Combien de points de Vie rend « ${o.nom} » ?${o.texte ? `\n${o.texte}` : ''}\n(voir la carte ; 0 si son effet est autre)`, '0');
           if (r === null) return;
           valeur = Math.max(0, Math.min(99, parseInt(r, 10) || 0));
         }

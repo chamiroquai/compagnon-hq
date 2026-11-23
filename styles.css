@@ -467,6 +467,9 @@ svg .icone { pointer-events: none; overflow: visible; }
 .champs-inv input.note-inv { flex: 2 1 180px; }
 .champs-inv input[type=number] { width: 4.2em; text-align: center; }
 .actions-inv { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+/* Description d'un objet (v0.39.0) */
+.description-inv { display: block; margin-top: 2px; font-style: italic; white-space: normal; }
+.description-inv.pleine-largeur { flex: 1 1 100%; }
 
 /* Réglages › Équipement de départ */
 .equipement-classe { border: 1px solid var(--bord); border-radius: 8px; padding: 6px 10px; margin: 0 0 8px; }
