@@ -173,6 +173,7 @@ const VuePlateau = (() => {
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : le héros actif doit se trouver devant elle (une case en diagonale ne suffit pas). Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
               <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on ne peut chercher le trésor que depuis une case voisine d’un coffre (le bouton reste grisé sinon).</li>
+              <li>Fouilles interdites (règle) : pas de fouille des pièges ni des portes secrètes si un monstre est en vue ; pas de fouille de trésor s’il y a un monstre dans la pièce. Les boutons sont alors grisés.</li>
               <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
               <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Un passage secret (⇄) connu s’emprunte en un pas : quand le héros actif est dessus, l’application propose de l’emprunter (après « Pas maintenant », touchez le héros pour que la proposition revienne).</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
@@ -1611,16 +1612,31 @@ const VuePlateau = (() => {
       declencherPiege(p.id, depuis, dir);
     }
 
-    // Fouilles (action) : portes secrètes ou pièges, sur les cases visibles de la pièce ou du couloir.
-    function monstreVisible() {
-      return etat.monstres.some(m => etat.revele.includes(Plateau.idx(L, m.x, m.y)));
+    /* Fouilles (action) : portes secrètes ou pièges, sur les cases visibles de la pièce ou du couloir.
+       Règle (livre p. 17, décision de l'utilisateur du 23/11/2026, bloquante) : impossible si un monstre
+       est dans le champ de vision du héros — même pièce, ou ligne de vue libre (portée de vue des
+       couloirs respectée). Pour les pièges, un monstre dans la zone fouillée (autre côté d'une porte
+       ouverte, écart 28) bloque aussi. Seuls les monstres déjà dévoilés comptent (pas de spoil). */
+    function monstreEnVue(h, genre) {
+      if (!h || h.x == null) return null;
+      const portee = Plateau.porteeDe(partie.reglages);
+      const zh = g.zones[Plateau.idx(L, h.x, h.y)];
+      const zone = genre === 'pieges' ? Plateau.casesFouillablesPieges(g, etat, h, portee).zone : null;
+      return etat.monstres.find(m => {
+        const i = Plateau.idx(L, m.x, m.y);
+        if (!etat.revele.includes(i)) return false;
+        if (Plateau.estPiece(zh) && g.zones[i] === zh) return true;
+        if (zone && zone.has(i)) return true;
+        return Math.hypot(m.x - h.x, m.y - h.y) <= portee + 1e-9 && Plateau.ligneDeVue(g, etat, h.x, h.y, m.x, m.y);
+      }) || null;
     }
+    const texteMonstreEnVue = (h, genre) => `Un monstre est en vue : ${h.nom} ne peut pas chercher ${genre === 'portes' ? 'de portes secrètes' : 'de pièges'} (règle). Éliminez-le ou éloignez-vous d’abord.`;
 
     function fouiller(genre) {
       const h = herosActif();
+      if (monstreEnVue(h, genre)) return msg(texteMonstreEnVue(h, genre));
       const avert = [];
       if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
-      if (monstreVisible()) avert.push('Un monstre est visible : la règle interdit de fouiller.');
       const portee = Plateau.porteeDe(partie.reglages);
       const trouves = genre === 'portes' ? Plateau.fouillerPortes(g, etat, h, portee) : Plateau.fouillerPieges(g, etat, h, portee);
       const passages = genre === 'portes' ? Plateau.fouillerPassages(g, etat, h, portee) : [];
@@ -1689,16 +1705,24 @@ const VuePlateau = (() => {
       return !coffres.some(m => casesMeuble(m).some(c => Math.abs(c % L - h.x) + Math.abs(Math.floor(c / L) - h.y) === 1));
     }
 
+    /* Règle (livre p. 14, décision de l'utilisateur du 23/11/2026, bloquante) : pas de fouille de trésor
+       s'il y a un monstre dans la pièce. Au fond d'une oubliette : un monstre en vue suffit. */
+    function monstreDansPiece(h) {
+      const piece = pieceFouille(h);
+      if (!piece) return null;
+      if (piece.startsWith('fosse@')) return monstreEnVue(h, 'tresor');
+      return etat.monstres.find(m => memeLieu(piece, m) && etat.revele.includes(Plateau.idx(L, m.x, m.y))) || null;
+    }
+
     function fouillerTresor() {
       const h = herosActif();
       const piece = pieceFouille(h);
       if (!piece) return msg('Les trésors ne se trouvent que dans les pièces (ou au fond d’une oubliette), pas dans les couloirs.');
+      if (monstreDansPiece(h)) return msg(`Un monstre est dans la pièce : ${h.nom} ne peut pas chercher de trésor (règle). Éliminez-le d’abord.`);
       // Règle maison bloquante (décision de l'utilisateur, exception au principe d'arbitrage).
       if (coffreTropLoin(h)) return msg(`Il y a un coffre dans cette pièce : ${h.nom} doit d’abord se placer sur une case voisine d’un coffre pour chercher un trésor.`);
       const avert = [];
       if ((etat.tour.actions || 0) >= 1) avert.push(`${h.nom} a déjà fait une action ce tour-ci.`);
-      if (etat.monstres.some(m => memeLieu(piece, m) && etat.revele.includes(Plateau.idx(L, m.x, m.y))))
-        avert.push('Un monstre est dans la pièce : la règle interdit de fouiller.');
       if ((etat.fouillesTresor[h.id] || []).includes(piece)) avert.push(`${h.nom} a déjà fouillé cette pièce (une fois par héros).`);
       const avertissement = avert.length ? '⚠ ' + avert.join(' ') + ' (Fouille faite quand même.)' : '';
       const piegeants = (quete.mobilier || []).filter(m => m.piege && Plateau.pieceDe(g, m.x, m.y) === piece
@@ -2482,14 +2506,16 @@ const VuePlateau = (() => {
             <div class="choix">
               ${cibles.length ? `<button id="md-attaquer" class="${fait ? '' : 'principal'}">Attaquer</button>` : ''}
               ${sortsDe(h).some(x => !x.utilise) ? '<button id="md-sorts">Lancer un sort</button>' : ''}
-              <button id="md-fouille-tresor"${coffreTropLoin(h) ? ' disabled' : ''}>Fouiller : trésor</button>
-              <button id="md-fouille-portes">Fouiller : portes secrètes</button>
-              <button id="md-fouille-pieges">Fouiller : pièges</button>
+              <button id="md-fouille-tresor"${coffreTropLoin(h) || monstreDansPiece(h) ? ' disabled' : ''}>Fouiller : trésor</button>
+              <button id="md-fouille-portes"${monstreEnVue(h, 'portes') ? ' disabled' : ''}>Fouiller : portes secrètes</button>
+              <button id="md-fouille-pieges"${monstreEnVue(h, 'pieges') ? ' disabled' : ''}>Fouiller : pièges</button>
               ${desamorcables.length ? '<button id="md-desamorcer">Désamorcer le piège</button>' : ''}
               ${meublesDesamorcables().map(m => `<button data-desarmer-meuble="${m.id}">Désamorcer : ${echapperTexte(m.nom)}</button>`).join('')}
             </div>
             ${coffreTropLoin(h) ? '<p class="erreur petit">Il y a un coffre dans cette pièce : pour chercher un trésor, placez-vous d’abord sur une case voisine d’un coffre.</p>' : ''}
-            ${monstreVisible() ? '<p class="discret petit">Un monstre est visible : les règles interdisent de fouiller (l’application vous laissera faire, avec un avertissement).</p>' : ''}
+            ${monstreEnVue(h, 'pieges') || monstreEnVue(h, 'portes')
+              ? '<p class="erreur petit">Un monstre est en vue : pas de fouille des pièges ni des portes secrètes (règle).</p>' : ''}
+            ${monstreDansPiece(h) && !coffreTropLoin(h) ? '<p class="erreur petit">Un monstre est dans la pièce : pas de fouille de trésor (règle).</p>' : ''}
 
             <div class="choix"><button id="md-fiche">Fiche de ${echapperTexte(h.nom)}</button></div>`;
         }
