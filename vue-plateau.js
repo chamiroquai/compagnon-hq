@@ -78,7 +78,9 @@ const VuePlateau = (() => {
     function detailDes(h, champ) {
       const base = caracBrute(h, champ), parts = [];
       if (champ === 'attaque') { const a = armeEnMain(h); if (a && Number.isFinite(a.des)) parts.push(`${a.nom}`); else if (a) parts.push(`⚠ dés de « ${a.nom} » non indiqués`); else parts.push('mains nues'); }
+      if (champ === 'attaque') { const a = armeEnMain(h); if (Inventaire.interditeA(a, h.classe || h.id)) parts.push('⚠ arme interdite à cette classe'); }
       if (champ === 'defense') { const b = Inventaire.bonusArmure(h?.inventaire || []); if (b && base !== null) parts.push(`${base} + ${b} d’armure`); }
+      if (champ === 'defense' && Inventaire.bouclierInutile(h?.inventaire || [])) parts.push('bouclier inutilisable avec une arme à deux mains');
       if (Plateau.fosseEn(etat, h.x, h.y)) parts.push('−1 dans la fosse');
       if (champ === 'attaque' && h.courage) parts.push('+2 Courage');
       if (champ === 'defense' && h.peauRoc) parts.push('+2 Peau de roc');
@@ -1123,22 +1125,42 @@ const VuePlateau = (() => {
     let combat = null;    // { monstre, ambiance } : duel ouvert, on attend les crânes du héros
     let conclusion = null; // résultat d'un duel, affiché jusqu'à « Suivant »
 
-    // Monstres que le héros actif peut attaquer : visibles, sur une case voisine
-    // (pas de diagonale), sans mur ni porte fermée entre les deux.
+    /* Façon dont le héros h peut attaquer le monstre m avec l'arme en main (v0.30.0) :
+       - 'contact' : case voisine (sans diagonale), sans mur ni porte fermée entre les deux ;
+       - 'diagonale' : arme « diagonale », case voisine en diagonale (même règle de coin que la ligne de vue) ;
+       - 'tir' : arme « à distance », monstre en vue (les figurines bloquent la ligne, comme pour les sorts) ;
+       - 'lancer' : arme « se lance », monstre en vue mais pas voisin ; l'arme est perdue ;
+       - 'tirVoisin' : arme seulement « à distance » contre un monstre voisin : interdit par la règle,
+         l'application avertit sans bloquer (principe d'arbitrage).
+       null : pas attaquable. Un monstre voisin en diagonale n'est pas « voisin » pour l'arbalète. */
+    function modeAttaque(h, m) {
+      if (!h || !etat.revele.includes(Plateau.idx(L, m.x, m.y))) return null;
+      const a = armeEnMain(h) || {};
+      const dx = Math.abs(m.x - h.x), dy = Math.abs(m.y - h.y);
+      if (dx + dy === 1 && Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, m.x, m.y)))
+        return a.distance && !a.lancer ? 'tirVoisin' : 'contact';
+      if (dx === 1 && dy === 1 && a.diagonale && Plateau.ligneDeVue(g, etat, h.x, h.y, m.x, m.y)) return 'diagonale';
+      if ((a.distance || a.lancer) && cibleVisible(h, m)) return a.distance ? 'tir' : 'lancer';
+      return null;
+    }
+    // Monstres que le héros actif peut attaquer.
     function ciblesAttaque() {
       const h = herosActif();
       if (!h) return [];
-      const vu = new Set(etat.revele);
-      return etat.monstres.filter(m =>
-        vu.has(Plateau.idx(L, m.x, m.y)) &&
-        Math.abs(m.x - h.x) + Math.abs(m.y - h.y) === 1 &&
-        Plateau.ouvert(g, etat, Plateau.idx(L, h.x, h.y), Plateau.idx(L, m.x, m.y)));
+      return etat.monstres.filter(m => modeAttaque(h, m));
+    }
+    function porteeArme(h) {
+      const a = armeEnMain(h) || {};
+      const p = ['un monstre visible sur une case voisine (sans diagonale)'];
+      if (a.diagonale) p.push('en diagonale');
+      if (a.distance || a.lancer) p.push('ou en vue (ligne de vue libre)');
+      return p.join(', ');
     }
 
     function commencerAttaque() {
       const h = herosActif();
       const cibles = ciblesAttaque();
-      if (!cibles.length) return msg('Aucun monstre à portée : il faut un monstre visible sur une case voisine (sans diagonale).');
+      if (!cibles.length) return msg(`Aucun monstre à portée : il faut ${porteeArme(h)}.`);
       if ((etat.tour.actions || 0) >= 1) msg(`⚠ ${h.nom} a déjà fait une action ce tour-ci (règle : une seule action par tour). Vous pouvez continuer.`);
       fenetreActions = null;
       // Un seul monstre à portée : le duel s'ouvre directement.
@@ -1156,7 +1178,13 @@ const VuePlateau = (() => {
           ? `Défense de ce ${infoMonstre(m.type).nom} inconnue : la quête ne la donne pas. Corrigez en vue MJ.`
           : `Défense des ${infoMonstre(m.type).nom}s inconnue : remplissez-la dans Réglages › Caractéristiques.`);
       ciblage = false;
-      combat = { monstre: id, ambiance: Ambiance.tirer('attaqueHeros', { heros: herosActif().nom, monstre: infoMonstre(m.type).nom }) };
+      const h = herosActif(), mode = modeAttaque(h, m), a = armeEnMain(h);
+      const alertes = [];
+      if (mode === 'tirVoisin') alertes.push(`⚠ Règle : « ${a.nom} » ne s’utilise pas contre un monstre voisin. Vous pouvez continuer.`);
+      if (Inventaire.interditeA(a, h.classe || h.id)) alertes.push(`⚠ Règle : « ${a.nom} » ne peut pas servir à ${h.nom}. Vous pouvez continuer.`);
+      if ((etat.tour.actions || 0) >= 1) alertes.unshift(`⚠ ${h.nom} a déjà fait une action ce tour-ci (règle : une seule action par tour). Vous pouvez continuer.`);
+      if (alertes.length) msg(...alertes.slice(0, 2));
+      combat = { monstre: id, mode, arme: a?.nom || null, ambiance: Ambiance.tirer('attaqueHeros', { heros: h.nom, monstre: infoMonstre(m.type).nom }) };
       dessiner();
     }
 
@@ -1179,11 +1207,17 @@ const VuePlateau = (() => {
       const vieAvant = m.corps ?? 1;
       const vieApres = Math.max(0, vieAvant - degats);
       const parSort = !!combat?.djinn;
+      // Arme lancée : elle est perdue une fois lancée (retirée de l'inventaire).
+      const lancee = !parSort && combat?.mode === 'lancer' ? armeEnMain(h) : null;
       combat = null;
       modifier(e => {
         if (!parSort) {
           if (e.tour.deplacement) e.tour.deplacement = null; // une action termine le déplacement en cours
           e.tour.actions = (e.tour.actions || 0) + 1;
+        }
+        if (lancee) {
+          const kh = e.heros.find(z => z.id === h.id), t = Inventaire.tri(kh.inventaire || []);
+          if (t.arme) kh.inventaire.splice(t.arme.k, 1);
         }
         const k = e.monstres.find(z => z.id === m.id);
         if (noteSommeil.includes('réveille')) delete k.endormi;
@@ -1193,7 +1227,8 @@ const VuePlateau = (() => {
       const valeurs = { heros: h.nom, monstre: nom, type: m.type };
       conclusion = {
         genre: 'heros', heros: h.id, monstre: m.id, type: m.type, monstreCourt: infoMonstre(m.type).court,
-        tirage, cranes, noirs, degats, vieMonstre: vieApres, vieMonstreAvant: vieAvant, vieMonstreMax: m.corpsMax, cle: 'h' + Date.now(), note: noteSommeil,
+        tirage, cranes, noirs, degats, vieMonstre: vieApres, vieMonstreAvant: vieAvant, vieMonstreMax: m.corpsMax, cle: 'h' + Date.now(),
+        note: noteSommeil + (lancee ? ` « ${lancee.nom} » est perdue (une arme lancée ne se récupère pas).` : ''),
         ambiance: Ambiance.tirer(vieApres === 0 ? 'mort' : degats ? 'monstreBlesse' : 'monstreIndemne', valeurs),
       };
       msg('');
@@ -2121,6 +2156,11 @@ const VuePlateau = (() => {
         html = `${combat.djinn ? '<p class="titre-zargon">🌪 Le Djinn attaque !</p>' : ''}<div class="duel">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax, 'attaquant')}<div class="centre">⚔</div>
             ${figurine('droite', Portraits.monstre(m.type, infoMonstre(m.type).court), infoMonstre(m.type).nom, m.corps, m.corpsMax, 'defenseur')}</div>
           <p class="ambiance">${echapperTexte(combat.ambiance)}</p>
+          ${combat.mode && combat.mode !== 'contact' ? `<p class="mode-attaque">${echapperTexte(
+            combat.mode === 'diagonale' ? `En diagonale, avec « ${combat.arme} ».`
+            : combat.mode === 'tir' ? `Tir à distance avec « ${combat.arme} ».`
+            : combat.mode === 'lancer' ? `${h.nom} lance « ${combat.arme} » : elle sera perdue.`
+            : `⚠ « ${combat.arme} » contre un monstre voisin (interdit par la règle).`)}</p>` : ''}
           <p class="question">${h.nom} : lancez ${n ?? 'vos'} dé${n > 1 ? 's' : ''} de combat. Combien de crânes ?</p>
           <div class="choix nombres">${boutonsNombre(n, 'cranes')}</div>
           <div class="choix"><button id="md-annuler-combat">Annuler</button></div>`;
@@ -2412,7 +2452,7 @@ const VuePlateau = (() => {
         <table class="caracs petite"><tbody>${ligne('Dés d’attaque', 'attaque')}${ligne('Dés de défense', 'defense')}</tbody></table>
         ${sortsDe(h).length ? `<h3>Sorts</h3><p class="petit">${sortsDe(h).map(x => `${Sorts.sort(x.id).nom}${x.utilise ? ' <span class="discret">(utilisé)</span>' : ''}`).join(' · ')}</p>` : ''}
         <h3>Inventaire</h3>
-        ${Inventaire.html(inventaire, { peutBoire: !h.mort })}
+        ${Inventaire.html(inventaire, { peutBoire: !h.mort, classe: h.classe || h.id })}
         ${h.mort ? '' : '<button id="fi-equipement" class="petit-bouton">Ajouter l’équipement de départ (Réglages)</button>'}
         <p class="discret petit">Or et inventaire sont enregistrés dans le personnage à la fin de la quête (menu ☰).
           Les boutons − et + s’annulent avec ↶.</p>`;

@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.29.0';
+const VERSION_APP = '0.30.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -422,6 +422,7 @@ async function exporter() {
     personnages: await Stockage.listerPersonnages(),
     cartesTresor: await Stockage.lireReglage('cartesTresor') || [],
     equipementDepart: await Stockage.lireReglage('equipementDepart') || null,
+    armurerie: await Stockage.lireReglage('armurerie') || [],
     imagePlateau: await Stockage.lireReglage('imagePlateau') || null,
     groupes: await Heros.lireGroupes(),
   };
@@ -453,6 +454,11 @@ async function importerFichier(fichier) {
     const r = await Heros.importer(donnees);
     return dire(r.erreur || (r.annule ? 'Ouverture annulée.' : r.succes), r.erreur ? 'erreur' : r.succes ? 'succes' : '');
   }
+  // Un fichier d'armes aussi.
+  if (donnees?.format === FORMAT_ARMURERIE) {
+    const r = await importerArmurerie(donnees);
+    return dire(r.erreur || (r.annule ? 'Ouverture annulée.' : r.succes), r.erreur ? 'erreur' : r.succes ? 'succes' : '');
+  }
   if (donnees?.format !== FORMAT_SAUVEGARDE) return dire('Ce fichier n’est pas une sauvegarde du Compagnon de quête.', 'erreur');
   if (donnees.versionFormat > VERSION_FORMAT) return dire('Cette sauvegarde vient d’une version plus récente de l’application : mettez-la à jour d’abord.', 'erreur');
   if (!Array.isArray(donnees.parties)) return dire('La sauvegarde ne contient pas de liste de parties.', 'erreur');
@@ -465,6 +471,7 @@ async function importerFichier(fichier) {
     + (remplacees.length ? `\n${remplacees.length} existe(nt) déjà sur cet iPad et sera(ont) remplacée(s) :\n– ${remplacees.map(p => p.nom).join('\n– ')}` : '')
     + (donnees.caracteristiques ? '\nLes caractéristiques (héros et monstres) du fichier remplaceront celles de cet iPad.' : '')
     + (donnees.equipementDepart ? '\nL’équipement de départ des héros du fichier remplacera celui de cet iPad.' : '')
+    + (Array.isArray(donnees.armurerie) && donnees.armurerie.length ? '\nL’armurerie du fichier remplacera celle de cet iPad.' : '')
     + (Array.isArray(donnees.personnages) && donnees.personnages.length ? `\n${donnees.personnages.length} personnage(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
     + (Array.isArray(donnees.groupes) && donnees.groupes.length ? `\n${donnees.groupes.length} groupe(s) enregistré(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
     + '\n\nContinuer ?';
@@ -483,6 +490,8 @@ async function importerFichier(fichier) {
   }
   if (Array.isArray(donnees.cartesTresor) && donnees.cartesTresor.length) await Stockage.ecrireReglage('cartesTresor', donnees.cartesTresor);
   if (donnees.equipementDepart && typeof donnees.equipementDepart === 'object') await Stockage.ecrireReglage('equipementDepart', donnees.equipementDepart);
+  if (Array.isArray(donnees.armurerie) && donnees.armurerie.length)
+    await ecrireArmurerie(donnees.armurerie.map(Inventaire.nettoyerArme).filter(Boolean));
   if (typeof donnees.imagePlateau?.donnees === 'string' && donnees.imagePlateau.donnees.startsWith('data:image/'))
     await Stockage.ecrireReglage('imagePlateau', donnees.imagePlateau);
   if (donnees.caracteristiques && typeof donnees.caracteristiques === 'object') {
@@ -513,10 +522,12 @@ async function afficherAPropos() {
   const caracs = await lireCaracs();
   const cartes = await Stockage.lireReglage('cartesTresor') || [];
   const equipement = await lireEquipementDepart();
+  const armes = await lireArmurerie();
   const imagePlateau = await Stockage.lireReglage('imagePlateau') || null;
   const themePlateau = await Stockage.lireReglage('themePlateau') || 'pierre';
   vue.innerHTML = `
     ${formulaireCaracs(caracs)}
+    ${formulaireArmurerie(armes)}
     ${formulaireEquipement(equipement)}
     ${formulaireImagePlateau(imagePlateau, themePlateau)}
     ${formulaireCartes(cartes)}
@@ -548,6 +559,7 @@ async function afficherAPropos() {
     </section>`;
 
   brancherCaracs(caracs);
+  brancherArmurerie(armes);
   brancherEquipement(equipement);
   brancherImagePlateau(imagePlateau);
   brancherCartes(cartes);
@@ -641,7 +653,7 @@ async function lireEquipementDepart() {
 }
 
 function blocEquipement(equipement, classe) {
-  return Inventaire.html(equipement[classe]);
+  return Inventaire.html(equipement[classe], { classe });
 }
 
 function formulaireEquipement(equipement) {
@@ -681,6 +693,150 @@ function brancherEquipement(equipement) {
     }, nom);
     brancher();
   });
+}
+
+/* ---------- Armurerie (armes saisies ou importées d'un fichier personnel, v0.30.0) ----------
+   Rien d'officiel dans le code : les noms, dés, prix et capacités viennent des cartes de l'utilisateur.
+   Le catalogue sert à remplir les inventaires (copie) ; il servira aussi à une future boutique. */
+
+const FORMAT_ARMURERIE = 'compagnon-hq/armurerie';
+
+async function lireArmurerie() {
+  const a = await Stockage.lireReglage('armurerie');
+  const liste = (Array.isArray(a) ? a : []).map(Inventaire.nettoyerArme).filter(Boolean);
+  Inventaire.definirArmurerie(liste);
+  return liste;
+}
+
+async function ecrireArmurerie(liste) {
+  await Stockage.ecrireReglage('armurerie', liste);
+  Inventaire.definirArmurerie(liste);
+}
+
+function resumeArme(a) {
+  const morceaux = [];
+  morceaux.push(Number.isFinite(a.des) ? `${a.des} dé${a.des > 1 ? 's' : ''}` : 'dés ?');
+  if (Number.isFinite(a.prix)) morceaux.push(`${a.prix} po`);
+  const cap = Inventaire.etiquettes(a);
+  if (cap.length) morceaux.push(cap.join(', ').toLowerCase());
+  if (a.interdits?.length) morceaux.push('interdite : ' + a.interdits.map(c => Regles.TYPES_HEROS.find(t => t.id === c)?.nom || c).join(', '));
+  return morceaux.join(' · ');
+}
+
+function formulaireArmurerie(armes) {
+  return `
+    <section class="carte">
+      <h2>Armurerie</h2>
+      <p>Les armes du jeu, d’après vos cartes : dés d’attaque, prix et capacités. On les prend ensuite
+         dans l’inventaire d’un héros (fiche, onglet Héros, équipement de départ). Elles restent sur cet iPad.</p>
+      <p class="discret petit">${armes.length} arme(s). Capacités appliquées en combat : diagonale, tir à distance
+        (pas sur un monstre voisin), arme lancée (perdue ensuite), deux mains (le bouclier ne compte pas).</p>
+      ${armes.length ? `<div class="tableau-defilant"><table class="caracs"><thead><tr><th>Arme</th><th>Détails</th><th></th></tr></thead><tbody>
+        ${armes.map((a, k) => `<tr><td>${echapper(a.nom)}${a.note ? `<br><span class="discret petit">${echapper(a.note)}</span>` : ''}</td>
+          <td class="petit">${echapper(resumeArme(a))}</td>
+          <td><button class="petit-bouton" data-modifier-arme="${k}">Modifier</button>
+            <button class="icone petit-bouton" data-retirer-arme="${k}" aria-label="Retirer">✕</button></td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+      <form id="form-arme" class="grille-champs">
+        <input id="ar-index" type="hidden" value="">
+        <label class="champ-perso"><span>Nom</span><input id="ar-nom" type="text" maxlength="60" placeholder="ex. Épée courte" required></label>
+        <label class="champ-perso"><span>Dés d’attaque</span><input id="ar-des" type="number" inputmode="numeric" min="0" max="12"></label>
+        <label class="champ-perso"><span>Prix (pièces d’or)</span><input id="ar-prix" type="number" inputmode="numeric" min="0" max="99999"></label>
+        <div class="cases-armurerie"><span class="petit">Capacités</span>
+          ${Inventaire.CAPACITES.map(c => `<label class="petit" title="${echapper(c.aide)}"><input type="checkbox" data-ar-cap="${c.id}"> ${c.court}</label>`).join('')}</div>
+        <div class="cases-armurerie"><span class="petit">Interdite à</span>
+          ${Regles.TYPES_HEROS.map(t => `<label class="petit"><input type="checkbox" data-ar-interdit="${t.id}"> ${echapper(t.nom)}</label>`).join('')}</div>
+        <label class="champ-perso large"><span>Note (facultatif)</span><input id="ar-note" type="text" maxlength="200"></label>
+        <button type="submit" id="ar-valider">Ajouter l’arme</button>
+        <button type="button" id="ar-annuler" hidden>Annuler la modification</button>
+      </form>
+      <p class="choix">
+        <button id="ar-ouvrir">Ouvrir un fichier d’armes…</button>
+        <button id="ar-exporter"${armes.length ? '' : ' disabled'}>Exporter l’armurerie</button>
+        <input id="ar-fichier" type="file" accept=".json,application/json" hidden>
+      </p>
+      <p id="etat-armurerie" class="petit"></p>
+    </section>`;
+}
+
+function brancherArmurerie(armes) {
+  const etat = (t, c = '') => { $('#etat-armurerie').textContent = t; $('#etat-armurerie').className = 'petit ' + c; };
+  const remplir = a => {
+    $('#ar-nom').value = a?.nom || '';
+    $('#ar-des').value = Number.isFinite(a?.des) ? a.des : '';
+    $('#ar-prix').value = Number.isFinite(a?.prix) ? a.prix : '';
+    $('#ar-note').value = a?.note || '';
+    vue.querySelectorAll('[data-ar-cap]').forEach(c => { c.checked = !!a?.[c.dataset.arCap]; });
+    vue.querySelectorAll('[data-ar-interdit]').forEach(c => { c.checked = !!a?.interdits?.includes(c.dataset.arInterdit); });
+  };
+  $('#form-arme').addEventListener('submit', async e => {
+    e.preventDefault();
+    const k = $('#ar-index').value;
+    const brut = { id: k !== '' ? armes[+k]?.id : undefined, nom: $('#ar-nom').value, des: $('#ar-des').value, prix: $('#ar-prix').value, note: $('#ar-note').value,
+      interdits: [...vue.querySelectorAll('[data-ar-interdit]:checked')].map(c => c.dataset.arInterdit) };
+    vue.querySelectorAll('[data-ar-cap]').forEach(c => { if (c.checked) brut[c.dataset.arCap] = true; });
+    const a = Inventaire.nettoyerArme(brut);
+    if (!a) return;
+    if (k !== '' && armes[+k]) armes[+k] = a; else armes.push(a);
+    await ecrireArmurerie(armes);
+    afficherAPropos();
+  });
+  vue.querySelectorAll('[data-modifier-arme]').forEach(b => b.addEventListener('click', () => {
+    const k = +b.dataset.modifierArme;
+    $('#ar-index').value = k; remplir(armes[k]);
+    $('#ar-valider').textContent = 'Enregistrer la modification'; $('#ar-annuler').hidden = false;
+    $('#ar-nom').focus();
+  }));
+  $('#ar-annuler').addEventListener('click', () => {
+    $('#ar-index').value = ''; remplir(null);
+    $('#ar-valider').textContent = 'Ajouter l’arme'; $('#ar-annuler').hidden = true;
+  });
+  vue.querySelectorAll('[data-retirer-arme]').forEach(b => b.addEventListener('click', async () => {
+    const a = armes[+b.dataset.retirerArme];
+    if (!confirm(`Retirer « ${a.nom} » de l’armurerie ? (Les héros qui la portent la gardent.)`)) return;
+    armes.splice(+b.dataset.retirerArme, 1);
+    await ecrireArmurerie(armes);
+    afficherAPropos();
+  }));
+  $('#ar-exporter').addEventListener('click', () => {
+    const maintenant = new Date().toISOString();
+    telechargerJson({ format: FORMAT_ARMURERIE, versionFormat: 1, versionApp: VERSION_APP, exporteLe: maintenant, armes },
+      `armurerie-${maintenant.slice(0, 10)}.prive.json`);
+  });
+  $('#ar-ouvrir').addEventListener('click', () => $('#ar-fichier').click());
+  $('#ar-fichier').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    let donnees;
+    try { donnees = JSON.parse(await f.text()); } catch { return etat('Ce fichier n’est pas un fichier JSON lisible.', 'erreur'); }
+    const r = await importerArmurerie(donnees);
+    if (r.erreur) return etat(r.erreur, 'erreur');
+    if (r.annule) return etat('Ouverture annulée.');
+    await afficherAPropos();
+    $('#etat-armurerie').textContent = r.succes; $('#etat-armurerie').className = 'petit succes';
+  });
+}
+
+/* Fichier d'armes (format compagnon-hq/armurerie v1) : les armes de même identifiant (ou, à défaut,
+   de même nom) sont remplacées, les autres ajoutées, après confirmation. */
+async function importerArmurerie(donnees) {
+  if (donnees?.format !== FORMAT_ARMURERIE) return { erreur: 'Ce fichier n’est pas un fichier d’armes du Compagnon de quête.' };
+  if (donnees.versionFormat > 1) return { erreur: 'Ce fichier vient d’une version plus récente de l’application : mettez-la à jour d’abord.' };
+  if (!Array.isArray(donnees.armes)) return { erreur: 'Le fichier ne contient pas de liste d’armes.' };
+  const recues = donnees.armes.map(Inventaire.nettoyerArme).filter(Boolean);
+  const refusees = donnees.armes.length - recues.length;
+  if (!recues.length) return { erreur: 'Aucune arme utilisable dans ce fichier (il faut au moins un nom).' };
+  const armes = await lireArmurerie();
+  const meme = (x, y) => x.id === y.id || x.nom.toLowerCase() === y.nom.toLowerCase();
+  const remplacees = recues.filter(a => armes.some(b => meme(a, b)));
+  if (!confirm(`Ce fichier contient ${recues.length} arme(s).`
+    + (remplacees.length ? `\n${remplacees.length} existe(nt) déjà et sera(ont) remplacée(s) :\n– ${remplacees.map(a => a.nom).join('\n– ')}` : '')
+    + (refusees ? `\n${refusees} élément(s) sans nom seront ignorés.` : '')
+    + '\n\nContinuer ?')) return { annule: true };
+  const garde = armes.filter(b => !recues.some(a => meme(a, b)));
+  await ecrireArmurerie([...garde, ...recues]);
+  return { succes: `${recues.length} arme(s) ajoutée(s) ou remplacée(s) dans l’armurerie.` };
 }
 
 /* ---------- Image du plateau (photo ou scan personnel, reste sur l'appareil) ----------
@@ -892,6 +1048,6 @@ document.querySelectorAll('.onglets button').forEach(b => b.addEventListener('cl
 }));
 $('#btn-retour').addEventListener('click', afficherParties);
 
-afficherParties();
+lireArmurerie().catch(() => {}).finally(afficherParties);
 verifierRappel();
 preparerHorsLigne();

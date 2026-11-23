@@ -515,3 +515,12 @@ svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }
 #form-groupe .grille-groupe { width: 100%; }
 #groupe-nom { width: min(100%, 420px); }
 .groupe-enregistre { margin-top: 12px; }
+
+/* Armes et armurerie (v0.30.0) */
+.capacites-inv { display: flex; flex-wrap: wrap; gap: 4px 12px; flex-basis: 100%; }
+.capacites-inv label, .cases-armurerie label { display: inline-flex; align-items: center; gap: 4px; }
+.choix-armurerie { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.choix-armurerie select { flex: 1 1 200px; min-width: 0; }
+.mode-attaque { text-align: center; font-weight: bold; margin: 4px 0; }
+.cases-armurerie { display: flex; flex-wrap: wrap; gap: 6px 14px; grid-column: 1 / -1; }
+.cases-armurerie > span { flex-basis: 100%; }

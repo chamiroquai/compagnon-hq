@@ -5,12 +5,64 @@
    Un objet reste un élément du tableau « inventaire » ; son bloc est donné par « emplacement »
    ('arme' ou 'armure' ; absent = autres objets). Les anciens inventaires restent valables.
    Les valeurs (dés, bonus) sont saisies par l'utilisateur d'après ses cartes : rien d'officiel ici.
-   Utilisé par la fiche en jeu (vue-plateau.js) et par l'onglet Héros (ecran-heros.js). */
+   Utilisé par la fiche en jeu (vue-plateau.js) et par l'onglet Héros (ecran-heros.js).
+
+   v0.30.0 — Armes et capacités (demande de l'utilisateur du 23/11/2026) :
+   - une arme peut porter des capacités : diagonale, distance (tir), lancer (perdue une fois lancée),
+     deuxMains (pas de bouclier) ; et « interdits » = classes qui ne peuvent pas s'en servir ;
+   - l'armurerie (Réglages › Armurerie) est un catalogue d'armes saisi ou importé par l'utilisateur
+     (fichier personnel) ; on y prend une arme pour l'inventaire, qui en reçoit une copie.
+   - un bouclier (pièce d'armure marquée « bouclier » ou dont le nom contient « bouclier »)
+     ne compte pas tant qu'une arme à deux mains est en main. */
 'use strict';
 
 const Inventaire = (() => {
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const estPotion = o => !!o && (o.potion || /potion/i.test(o.nom || ''));
+  const estBouclier = o => !!o && (o.bouclier === true || (o.bouclier !== false && /bouclier/i.test(o.nom || '')));
+
+  // Capacités d'une arme (ordre d'affichage).
+  const CAPACITES = [
+    { id: 'diagonale', court: 'Diagonale', aide: 'attaque aussi un monstre voisin en diagonale' },
+    { id: 'distance', court: 'À distance', aide: 'tire sur un monstre en vue, mais pas sur un monstre voisin' },
+    { id: 'lancer', court: 'Se lance', aide: 'peut être lancée sur un monstre en vue ; elle est perdue une fois lancée' },
+    { id: 'deuxMains', court: 'Deux mains', aide: 'pas de bouclier avec cette arme' },
+  ];
+  const classes = () => (typeof Regles !== 'undefined' ? Regles.TYPES_HEROS : []);
+  const nomClasse = id => classes().find(t => t.id === id)?.nom || id;
+
+  /* ---------- Armurerie (catalogue saisi par l'utilisateur) ---------- */
+  let catalogue = [];
+  // Nettoie une entrée d'armurerie (fichier importé ou formulaire) ; null si inutilisable.
+  function nettoyerArme(a) {
+    if (!a || typeof a !== 'object' || typeof a.nom !== 'string' || !a.nom.trim()) return null;
+    const ent = (v, max) => { const n = Math.round(Number(v)); return v === '' || v == null || !Number.isFinite(n) ? undefined : Math.max(0, Math.min(max, n)); };
+    const r = { id: typeof a.id === 'string' && a.id ? a.id.slice(0, 40) : 'arme-' + Math.random().toString(36).slice(2, 10), nom: a.nom.trim().slice(0, 60) };
+    const des = ent(a.des, 12), prix = ent(a.prix, 99999);
+    if (des !== undefined) r.des = des;
+    if (prix !== undefined) r.prix = prix;
+    for (const c of CAPACITES) if (a[c.id] === true) r[c.id] = true;
+    const interdits = Array.isArray(a.interdits) ? a.interdits.filter(c => classes().some(t => t.id === c)) : [];
+    if (interdits.length) r.interdits = [...new Set(interdits)];
+    if (typeof a.note === 'string' && a.note.trim()) r.note = a.note.trim().slice(0, 200);
+    return r;
+  }
+  const definirArmurerie = liste => { catalogue = (Array.isArray(liste) ? liste : []).map(nettoyerArme).filter(Boolean); };
+  const armurerie = () => catalogue;
+  // Objet d'inventaire tiré d'une arme de l'armurerie (copie : modifier l'armurerie ne change pas les inventaires).
+  function depuisArmurerie(a, emplacement) {
+    const o = { nom: a.nom, armurerie: a.id };
+    if (Number.isFinite(a.des)) o.des = a.des;
+    for (const c of CAPACITES) if (a[c.id]) o[c.id] = true;
+    if (a.interdits?.length) o.interdits = [...a.interdits];
+    if (a.note) o.note = a.note.slice(0, 120);
+    if (emplacement) o.emplacement = emplacement;
+    return o;
+  }
+  // Petites étiquettes des capacités d'une arme.
+  const etiquettes = o => CAPACITES.filter(c => o?.[c.id]).map(c => c.court);
+  // Avertissement si l'arme est interdite à cette classe (règle des cartes ; l'application ne bloque pas).
+  const interditeA = (o, classe) => !!(o && classe && Array.isArray(o.interdits) && o.interdits.includes(classe));
 
   // Répartition : { arme: {o, k} | null, armures: [{o, k}], autres: [{o, k}] } (k = position dans le tableau).
   function tri(inv = []) {
@@ -24,29 +76,49 @@ const Inventaire = (() => {
     };
   }
 
-  const bonusArmure = inv => tri(inv).armures.reduce((t, { o }) => t + (Number.isFinite(o.des) ? o.des : 0), 0);
+  // Un bouclier ne sert à rien avec une arme à deux mains en main.
+  const bouclierInutile = inv => { const t = tri(inv); return !!t.arme?.o.deuxMains && t.armures.some(({ o }) => estBouclier(o)); };
+  const bonusArmure = inv => {
+    const t = tri(inv), sansBouclier = !!t.arme?.o.deuxMains;
+    return t.armures.reduce((s, { o }) => s + (Number.isFinite(o.des) && !(sansBouclier && estBouclier(o)) ? o.des : 0), 0);
+  };
 
-  function champs(o, k, libelleDes, aide) {
+  function champs(o, k, libelleDes, aide, arme = false) {
     return `<div class="champs-inv">
         <input type="text" maxlength="80" data-inv-k="${k}" data-inv-champ="nom" value="${esc(o.nom)}" aria-label="Nom">
         <label class="petit">${libelleDes} <input type="number" min="0" max="12" inputmode="numeric" data-inv-k="${k}" data-inv-champ="des" value="${Number.isFinite(o.des) ? o.des : ''}" placeholder="—"></label>
         <input type="text" maxlength="120" class="note-inv" data-inv-k="${k}" data-inv-champ="note" value="${esc(o.note || '')}" placeholder="${aide}" aria-label="Note">
+        ${arme ? `<span class="capacites-inv">${CAPACITES.map(c => `<label class="petit" title="${esc(c.aide)}"><input type="checkbox" data-inv-k="${k}" data-inv-cap="${c.id}"${o[c.id] ? ' checked' : ''}> ${c.court}</label>`).join('')}</span>` : ''}
       </div>`;
   }
 
-  /* HTML des trois blocs. options : { lectureSeule, peutBoire } */
-  function html(inv = [], { lectureSeule = false, peutBoire = false } = {}) {
+  // Liste de choix de l'armurerie (si elle n'est pas vide).
+  function choixArmurerie() {
+    if (!catalogue.length) return '';
+    return `<div class="choix-armurerie"><select class="choix-classe" data-inv-armurerie aria-label="Arme de l’armurerie">
+        ${catalogue.map((a, i) => `<option value="${i}">${esc(a.nom)}${Number.isFinite(a.des) ? ` — ${a.des} dé${a.des > 1 ? 's' : ''}` : ''}${etiquettes(a).length ? ` (${etiquettes(a).join(', ').toLowerCase()})` : ''}</option>`).join('')}
+      </select>
+      <button class="petit-bouton" data-inv-prendre="arme">En main</button>
+      <button class="petit-bouton" data-inv-prendre="">Dans le sac</button></div>`;
+  }
+
+  /* HTML des trois blocs. options : { lectureSeule, peutBoire, classe } */
+  function html(inv = [], { lectureSeule = false, peutBoire = false, classe = null } = {}) {
     const { arme, armures, autres } = tri(inv);
     const bonus = bonusArmure(inv);
+    const avert = [];
+    if (arme && interditeA(arme.o, classe)) avert.push(`⚠ Règle : « ${esc(arme.o.nom)} » ne peut pas servir à ${esc(nomClasse(classe))} (ses dés sont comptés quand même).`);
+    if (bouclierInutile(inv)) avert.push('⚠ Arme à deux mains : le bouclier ne compte pas.');
     const boutons = (k, liste) => lectureSeule ? '' : `<span class="actions-inv">${liste.join('')}
         <button class="icone petit-bouton" data-inv-retirer="${k}" aria-label="Retirer">✕</button></span>`;
     return `
       <div class="bloc-inv">
         <h4>Arme active <span class="discret petit">· ses dés remplacent les dés d’attaque</span></h4>
-        ${arme ? `<div class="ligne-inv">${champs(arme.o, arme.k, 'Dés d’attaque', 'Particularité : diagonale, à distance…')}
+        ${arme ? `<div class="ligne-inv">${champs(arme.o, arme.k, 'Dés d’attaque', 'Note', true)}
             ${boutons(arme.k, [`<button class="petit-bouton" data-inv-ranger="${arme.k}">Ranger</button>`])}</div>`
           : '<p class="discret petit">Aucune arme en main.</p>'}
-        ${lectureSeule ? '' : '<button class="petit-bouton" data-inv-ajouter="arme">Nouvelle arme en main…</button>'}
+        ${avert.map(t => `<p class="erreur petit">${t}</p>`).join('')}
+        ${lectureSeule ? '' : `${choixArmurerie()}<button class="petit-bouton" data-inv-ajouter="arme">Autre arme en main…</button>`}
       </div>
       <div class="bloc-inv">
         <h4>Armure <span class="discret petit">· ${bonus ? `+${bonus} dé${bonus > 1 ? 's' : ''} de défense au total` : 'ses bonus s’ajoutent aux dés de défense'}</span></h4>
@@ -58,7 +130,7 @@ const Inventaire = (() => {
       <div class="bloc-inv">
         <h4>Autres objets</h4>
         ${autres.length ? `<ul class="inventaire">${autres.map(({ o, k }) => `<li>
-            <span>${esc(o.nom)}${Number.isFinite(o.soin) ? ` <span class="discret petit">(+${o.soin} Vie)</span>` : ''}${o.note ? ` <span class="discret petit">· ${esc(o.note)}</span>` : ''}</span>
+            <span>${esc(o.nom)}${Number.isFinite(o.soin) ? ` <span class="discret petit">(+${o.soin} Vie)</span>` : ''}${Number.isFinite(o.des) && !o.emplacement ? ` <span class="discret petit">· ${o.des} dé${o.des > 1 ? 's' : ''}</span>` : ''}${etiquettes(o).length ? ` <span class="discret petit">· ${etiquettes(o).join(', ').toLowerCase()}</span>` : ''}${o.note ? ` <span class="discret petit">· ${esc(o.note)}</span>` : ''}</span>
             ${boutons(k, [
               peutBoire && estPotion(o) ? `<button class="petit-bouton" data-boire="${k}">Boire</button>` : '',
               estPotion(o) ? '' : `<button class="petit-bouton" data-inv-equiper="${k}">En main</button>`,
@@ -85,6 +157,17 @@ const Inventaire = (() => {
         else if (v) o.note = v.slice(0, 120); else delete o.note;
       });
     }));
+    racine.querySelectorAll('[data-inv-cap]').forEach(inp => inp.addEventListener('change', () =>
+      changer(inv => { const o = inv[k(inp)]; if (!o) return; if (inp.checked) o[inp.dataset.invCap] = true; else delete o[inp.dataset.invCap]; })));
+    racine.querySelectorAll('[data-inv-prendre]').forEach(b => b.addEventListener('click', () => {
+      const a = catalogue[+racine.querySelector('[data-inv-armurerie]')?.value];
+      if (!a) return;
+      const empl = b.dataset.invPrendre;
+      changer(inv => {
+        if (empl === 'arme') inv.forEach(o => { if (o.emplacement === 'arme') delete o.emplacement; });
+        inv.push(depuisArmurerie(a, empl));
+      });
+    }));
     racine.querySelectorAll('[data-inv-ranger]').forEach(b => b.addEventListener('click', () =>
       changer(inv => { delete inv[+b.dataset.invRanger].emplacement; })));
     racine.querySelectorAll('[data-inv-equiper]').forEach(b => b.addEventListener('click', () =>
@@ -108,5 +191,6 @@ const Inventaire = (() => {
     }));
   }
 
-  return { tri, html, brancher, bonusArmure, estPotion };
+  return { tri, html, brancher, bonusArmure, bouclierInutile, estPotion, estBouclier, CAPACITES, etiquettes, interditeA,
+    nettoyerArme, definirArmurerie, armurerie, depuisArmurerie };
 })();

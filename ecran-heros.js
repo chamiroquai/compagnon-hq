@@ -300,7 +300,8 @@ const Heros = (() => {
     const att = arme && Number.isFinite(arme.o.des) ? `${arme.o.des} (${echapper(arme.o.nom)})`
       : `${p.attaque ?? '?'}${arme ? ` (⚠ dés de « ${echapper(arme.o.nom)} » non indiqués)` : ' (mains nues)'}`;
     const def = p.defense == null ? '?' : bonus ? `${p.defense + bonus} (${p.defense} + ${bonus} d’armure)` : `${p.defense}`;
-    return `<strong>En combat</strong> : attaque ${att} · défense ${def}`;
+    const cap = arme ? Inventaire.etiquettes(arme.o) : [];
+    return `<strong>En combat</strong> : attaque ${att}${cap.length ? ` · ${cap.join(', ').toLowerCase()}` : ''} · défense ${def}${Inventaire.bouclierInutile(p.inventaire || []) ? ' (bouclier inutilisable avec une arme à deux mains)' : ''}`;
   }
 
   /* ---------- Écran : fiche d'un personnage ---------- */
@@ -333,7 +334,7 @@ const Heros = (() => {
       </section>
       <section class="carte">
         <h2>Inventaire</h2>
-        <div id="pf-inventaire">${Inventaire.html(p.inventaire || [])}</div>
+        <div id="pf-inventaire">${Inventaire.html(p.inventaire || [], { classe: p.classe })}</div>
         <button id="pf-equipement" class="petit-bouton">Ajouter l’équipement de départ (${echapper(nomClasse(p.classe))})</button>
         <p id="pf-equipement-etat" class="discret petit"></p>
       </section>
