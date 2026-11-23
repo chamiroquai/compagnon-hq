@@ -1035,7 +1035,7 @@ const VuePlateau = (() => {
         let reveil = '';
         if (m.endormi) {
           // Carte 2021 : 1 dé rouge par point d'Esprit ; un 6 brise le sort.
-          const des = desRouges(Math.max(1, Regles.valeurMonstre(caracs, m, 'esprit') ?? 1));
+          const des = desRouges(Math.max(0, Regles.valeurMonstre(caracs, m, 'esprit') ?? 0));
           if (!des.includes(6)) { z.plan = { monstre: m.id, statut: 'dort', de: des.join(', '), ambiance: Ambiance.tirer('dort', { monstre: nomM }) }; return; }
           delete m.endormi; // réveillé au début de son tour : il agit dans ce même tour (décision du 4/11/2026)
           reveil = Ambiance.tirer('reveil', { monstre: nomM }) + ' ';
@@ -2009,7 +2009,7 @@ const VuePlateau = (() => {
               surMonstre(() => {});
               return fin(`Le sommeil n’a aucun effet sur ${nomC} (momies, zombies et squelettes y échappent).`);
             }
-            const esprit = Math.max(1, Regles.valeurMonstre(caracs, visee, 'esprit') ?? 1);
+            const esprit = Math.max(0, Regles.valeurMonstre(caracs, visee, 'esprit') ?? 0);
             const des = desRouges(esprit);
             const resiste = des.includes(6);
             surMonstre(k => { if (!resiste) k.endormi = true; });
