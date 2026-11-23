@@ -35,10 +35,11 @@ const Portraits = (() => {
   }
   function monstre(type, court) {
     const img = personnalises.monstres[type];
-    return img ? `<img src="${img}" alt="" class="portrait-img">` : medaillon('#2f3a24', court, true, picto('monstre', type, '#d6f5b0'));
+    // Médaillon du livre (symboles.js) : image entière, sans recadrage en rond.
+    return img ? `<img src="${img}" alt="" class="portrait-img${personnalises.medaillons ? ' medaillon-livre' : ''}">` : medaillon('#2f3a24', court, true, picto('monstre', type, '#d6f5b0'));
   }
 
-  function definirPersonnalises(p) { personnalises = { heros: p?.heros || {}, monstres: p?.monstres || {} }; }
+  function definirPersonnalises(p) { personnalises = { heros: p?.heros || {}, monstres: p?.monstres || {}, medaillons: !!p?.medaillons }; }
 
   return { heros, monstre, definirPersonnalises };
 })();

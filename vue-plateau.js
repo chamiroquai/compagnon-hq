@@ -368,13 +368,35 @@ const VuePlateau = (() => {
       }
       if (theme) el('rect', { x: 0, y: 0, width: L * T, height: H * T, fill: 'url(#t-grain)', class: 'grain' }, fond);
 
+      // 1 bis. Cases de roche dévoilées : symbole « case obstruée » du livre (double pour deux cases
+      //        côte à côte isolées), seulement si le fichier de symboles en contient.
+      if (Symboles.existe('caseObstruee')) {
+        const gro = el('g', { class: 'obstruees' }, svg);
+        const roche = (x, y) => x >= 0 && y >= 0 && x < L && y < H && g.zones[Plateau.idx(L, x, y)] === '#';
+        const fait = new Set();
+        for (let i = 0; i < L * H; i++) {
+          if (g.zones[i] !== '#' || fait.has(i) || !visible(i)) continue;
+          const x = i % L, y = Math.floor(i / L);
+          // Paire isolée : exactement deux cases de roche alignées.
+          const hor = roche(x + 1, y) && !roche(x - 1, y) && !roche(x + 2, y) && !roche(x, y - 1) && !roche(x, y + 1) && !roche(x + 1, y - 1) && !roche(x + 1, y + 1);
+          const ver = !hor && roche(x, y + 1) && !roche(x, y - 1) && !roche(x, y + 2) && !roche(x - 1, y) && !roche(x + 1, y) && !roche(x - 1, y + 1) && !roche(x + 1, y + 1);
+          if ((hor || ver) && Symboles.existe('caseObstrueeDouble')) {
+            const j = hor ? i + 1 : i + L;
+            fait.add(j);
+            Symboles.etirer(gro, 'caseObstrueeDouble', x * T, y * T, (hor ? 2 : 1) * T, (hor ? 1 : 2) * T, hor ? 0 : 90);
+          } else Symboles.etirer(gro, 'caseObstruee', x * T, y * T, T, T);
+        }
+      }
+
       // 2. Escalier
       if (quete.escalier) {
         const { x, y } = quete.escalier;
         if (visible(Plateau.idx(L, x, y))) {
-          const gr = el('g', { class: 'escalier' }, svg);
+          const livre = Symboles.existe('escalier');
+          const gr = el('g', { class: 'escalier' + (livre ? ' livre' : '') }, svg);
           el('rect', { x: x * T + 3, y: y * T + 3, width: 2 * T - 6, height: 2 * T - 6, rx: 4 }, gr);
-          if (!Icones.poser(gr, 'plateau', 'escalier', (x + 1) * T, (y + 1) * T, T * 1.4))
+          if (livre) Symboles.etirer(gr, 'escalier', x * T + 1, y * T + 1, 2 * T - 2, 2 * T - 2, quete.escalier.rotation || 0);
+          else if (!Icones.poser(gr, 'plateau', 'escalier', (x + 1) * T, (y + 1) * T, T * 1.4))
             for (let k = 1; k < 5; k++) el('line', { x1: x * T + 6, x2: x * T + 2 * T - 6, y1: y * T + k * 2 * T / 5, y2: y * T + k * 2 * T / 5 }, gr);
         }
       }
@@ -382,16 +404,21 @@ const VuePlateau = (() => {
       // 3. Mobilier
       for (const m of quete.mobilier || []) {
         if (!visible(Plateau.idx(L, m.x, m.y))) continue;
-        const gr = el('g', { class: 'mobilier m-' + m.type }, svg);
         const ml = m.l || 1, mh = m.h || 1;
+        const livre = Symboles.existe(m.type);
+        const gr = el('g', { class: 'mobilier m-' + m.type + (livre ? ' livre' : '') }, svg);
         el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: ml * T - 8, height: mh * T - 8, rx: 3 }, gr);
         el('title', {}, gr).textContent = m.nom;
+        // Symbole du livre (symboles.js) : étiré sur toute la surface du meuble ; un meuble plus haut
+        // que large est tourné d'un quart de tour, sauf si la quête précise « rotation ».
+        if (livre) Symboles.etirer(gr, m.type, m.x * T + 2, m.y * T + 2, ml * T - 4, mh * T - 4, m.rotation ?? (mh > ml ? 90 : 0));
         // Pictogramme centré ; sur un meuble allongé d'au moins 3 cases, le nom s'ajoute à côté.
         const avecNom = Icones.existe('meuble', m.type) && Math.max(ml, mh) >= 3 && Math.min(ml, mh) === 1;
         const taille = Math.min(ml, mh) * T * 0.75;
         const icx = avecNom && ml >= mh ? (m.x + 0.5) * T : (m.x + ml / 2) * T;
         const icy = avecNom && mh > ml ? (m.y + 0.5) * T : (m.y + mh / 2) * T;
-        if (Icones.poser(gr, 'meuble', m.type, icx, icy, taille)) {
+        if (livre) { /* symbole déjà posé */ }
+        else if (Icones.poser(gr, 'meuble', m.type, icx, icy, taille)) {
           if (avecNom) {
             const vertical = mh > ml;
             const t = el('text', { x: vertical ? (m.x + 0.5) * T : (m.x + 0.5 + ml / 2) * T, y: vertical ? (m.y + 0.5 + mh / 2) * T + 4 : (m.y + 0.5) * T + 4, class: 'etiquette' }, gr);
@@ -428,9 +455,16 @@ const VuePlateau = (() => {
         const i = Plateau.idx(L, p.x, p.y);
         const connu = p.trouve || p.declenche;
         if (!(vueMJ || (connu && vu.has(i)))) continue;
-        const cls = 'piege piege-' + p.type + (p.declenche ? ' declenche' : '') + (!connu ? ' cache' : '');
+        // Symboles du livre : oubliette (fosse), éboulement (bloc repéré) puis case obstruée (bloc tombé), lance.
+        const cleLivre = p.type === 'fosse' ? 'fosse' : p.type === 'lance' ? 'lance' : p.type === 'bloc' ? (p.declenche ? 'caseObstruee' : 'eboulement') : '';
+        const livre = Symboles.existe(cleLivre);
+        const cls = 'piege piege-' + p.type + (p.declenche ? ' declenche' : '') + (!connu ? ' cache' : '') + (livre ? ' livre' : '');
         const gp = el('g', { class: cls }, svg);
-        if (p.declenche && p.type === 'bloc') {
+        if (livre) {
+          el('rect', { x: p.x * T + 1, y: p.y * T + 1, width: T - 2, height: T - 2, rx: 3 }, gp);
+          if (p.type === 'lance') Symboles.centrer(gp, cleLivre, p.x * T + T / 2, p.y * T + T / 2, T * 0.86);
+          else Symboles.etirer(gp, cleLivre, p.x * T + 1, p.y * T + 1, T - 2, T - 2);
+        } else if (p.declenche && p.type === 'bloc') {
           el('rect', { x: p.x * T + 1, y: p.y * T + 1, width: T - 2, height: T - 2, rx: 3 }, gp);
         } else if (p.declenche && p.type === 'fosse') {
           el('rect', { x: p.x * T + 4, y: p.y * T + 4, width: T - 8, height: T - 8, rx: 10 }, gp);
@@ -497,8 +531,14 @@ const VuePlateau = (() => {
         const w = horizontale ? T * 0.8 : T * 0.3, h = horizontale ? T * 0.3 : T * 0.8;
         const cls = 'porte' + (ouverte ? ' ouverte' : '') + (!trouvee ? ' secrete' : '') + (porteProposee()?.id === p.id ? ' proposee' : '')
           + (djinnPorteChoix && !ouverte && !vueMJ ? ' cible-djinn' : '');
-        const gr = el('g', { class: cls, 'data-porte': p.id }, svg);
+        // Symbole du livre pour une porte fermée (porte secrète une fois trouvée, ou en vue MJ) ; une porte ouverte garde son trait.
+        const cleLivre = ouverte ? '' : p.secrete ? 'porteSecrete' : 'porte';
+        const livre = Symboles.existe(cleLivre);
+        const gr = el('g', { class: cls + (livre ? ' livre' : ''), 'data-porte': p.id }, svg);
         el('rect', { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: 2 }, gr);
+        if (livre && cleLivre === 'porte') Symboles.etirer(gr, 'porte', cx - (horizontale ? T * 0.48 : T * 0.29), cy - (horizontale ? T * 0.29 : T * 0.48),
+          horizontale ? T * 0.96 : T * 0.58, horizontale ? T * 0.58 : T * 0.96, horizontale ? 0 : 90);
+        else if (livre) Symboles.centrer(gr, 'porteSecrete', cx, cy, T * 0.86, horizontale ? 0 : 90);
         // Zone tactile : toute la longueur de la porte, mais peu épaisse,
         // pour ne pas voler les touchers destinés aux cases voisines.
         const tw = horizontale ? T : T * 0.5, th = horizontale ? T * 0.5 : T;
@@ -514,10 +554,13 @@ const VuePlateau = (() => {
         // Pointillés : cible qu'une autre figurine interceptera (sort ou tir).
         const horsVueSort = (visableSort && !Sorts.sort(sortCible).partout && intercepte(herosActif(), m))
           || (ciblage && visableCible && intercepte(herosActif(), m));
-        const gr = el('g', { class: 'pion monstre' + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : '') + (horsVueSort ? ' hors-vue' : ''), 'data-monstre': m.id }, svg);
+        const livreM = Symboles.existe(m.type);
+        const gr = el('g', { class: 'pion monstre' + (livreM ? ' livre' : '') + (vu.has(Plateau.idx(L, m.x, m.y)) ? '' : ' cache') + (visableCible ? ' cible' : '') + (horsVueSort ? ' hors-vue' : ''), 'data-monstre': m.id }, svg);
         el('rect', { x: m.x * T + 3, y: m.y * T + 3, width: T - 6, height: T - 6, rx: 5 }, gr);
         el('title', {}, gr).textContent = m.nom || infoMonstre(m.type).nom;
-        if (!Icones.poser(gr, 'monstre', m.type, m.x * T + T / 2, m.y * T + T / 2, T - 9)) {
+        // Médaillon du livre : un peu plus grand que la case, les oreilles et cornes dépassent.
+        if (livreM) Symboles.centrer(gr, m.type, m.x * T + T / 2, m.y * T + T / 2, T * 1.12);
+        else if (!Icones.poser(gr, 'monstre', m.type, m.x * T + T / 2, m.y * T + T / 2, T - 9)) {
           const t = el('text', { x: m.x * T + T / 2, y: m.y * T + T / 2 + 5 }, gr);
           t.textContent = infoMonstre(m.type).court;
         }
@@ -2373,9 +2416,15 @@ const VuePlateau = (() => {
 
     const animes = new Set();
 
+    // Face de dé : image du livre (symboles.js) si elle existe, sinon le symbole texte.
+    function faceDe(f) {
+      const src = Symboles.src('de-' + f);
+      return src ? `<img src="${src}" alt="" class="face-livre">` : Regles.afficher([f]);
+    }
+
     function htmlDes(tirage, cle) {
       return `<div class="des-lances" data-cle="${cle}" data-final="${tirage.join(',')}">`
-        + tirage.map(f => `<span class="de de-${f}">${Regles.afficher([f])}</span>`).join('')
+        + tirage.map(f => `<span class="de de-${f}">${faceDe(f)}</span>`).join('')
         + (tirage.length ? '' : '<span class="discret">aucun dé</span>') + '</div>';
     }
 
@@ -2392,11 +2441,11 @@ const VuePlateau = (() => {
       let t = 0;
       const minuterie = setInterval(() => {
         t += 90;
-        des.forEach(d => { d.textContent = Regles.afficher([faces[Math.floor(Math.random() * 3)]]); });
+        des.forEach(d => { d.innerHTML = faceDe(faces[Math.floor(Math.random() * 3)]); });
         if (t >= DUREE_DES) {
           clearInterval(minuterie);
           const final = zone.dataset.final.split(',');
-          des.forEach((d, k) => { d.textContent = Regles.afficher([final[k]]); });
+          des.forEach((d, k) => { d.innerHTML = faceDe(final[k]); });
           zone.classList.remove('roule');
           suite.forEach(e => e.classList.remove('masque'));
         }

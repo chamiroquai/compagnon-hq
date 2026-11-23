@@ -535,3 +535,28 @@ svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }
 /* Allié à escorter (v0.33.0) */
 .pion.heros.allie circle:not(.anneau) { fill: #8c7a5b; }
 .pastille.allie { background: #8c7a5b; }
+
+/* ---------- Symboles personnels du plateau (v0.36.0, symboles.js) ---------- */
+.mobilier.livre rect, .escalier.livre rect { fill: transparent; stroke: none; }
+.monstre.livre rect { fill: transparent; stroke: none; }
+.monstre.livre.cible rect { stroke: #ff5a4a; stroke-width: 4; }
+.monstre.livre.cible.hors-vue rect { stroke-dasharray: 5 4; }
+.monstre .symbole { filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.7)); }
+.piege.livre rect { fill: transparent; stroke: none; }
+.piege.livre.cache rect { stroke: #ff5a4a; stroke-width: 2; stroke-dasharray: 4 3; }
+.piege.livre.cache .symbole { opacity: 0.45; }
+.porte.livre rect:first-child { fill: transparent; stroke: none; }
+.porte.livre.proposee rect:first-child { stroke: #ffe28a; stroke-width: 4; }
+.porte.livre.cible-djinn rect:first-child { stroke: #7fd0ff; stroke-width: 4; }
+.porte.livre.secrete .symbole { opacity: 0.5; }
+.obstruees { pointer-events: none; }
+.symbole { pointer-events: none; }
+.des-lances .de .face-livre { width: 40px; height: 40px; border-radius: 6px; display: block; }
+.combattant .portrait img.medaillon-livre { object-fit: contain; border-radius: 0; }
+.logo-livre { text-align: center; margin: 4px 0 10px; }
+.logo-livre img { max-width: min(520px, 90%); height: auto; }
+.apercu-symboles { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; padding: 8px; background: #d8c9a8; border-radius: 8px; }
+.apercu-symboles img { height: 44px; width: auto; }
+.case-symboles { display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.case-symboles input { width: auto; }
+.ligne input[type="checkbox"] { flex: none; }

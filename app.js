@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.35.0';
+const VERSION_APP = '0.36.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -68,7 +68,9 @@ async function afficherParties() {
   $('#btn-retour').hidden = true;
 
   const parties = (await Stockage.listerParties()).sort((a, b) => b.modifieeLe.localeCompare(a.modifieeLe));
+  const logo = Symboles.src('logo');
   vue.innerHTML = `
+    ${logo ? `<div class="logo-livre"><img src="${logo}" alt=""></div>` : ''}
     <section class="carte">
       <h2>Nouvelle partie</h2>
       <form id="form-nouvelle" class="ligne">
@@ -425,6 +427,7 @@ async function exporter() {
     equipementDepart: await Stockage.lireReglage('equipementDepart') || null,
     armurerie: await Stockage.lireReglage('armurerie') || [],
     imagePlateau: await Stockage.lireReglage('imagePlateau') || null,
+    symbolesLivre: await Stockage.lireReglage('symbolesLivre') || null,
     groupes: await Heros.lireGroupes(),
   };
   telechargerJson(contenu, `compagnon-sauvegarde-${maintenant.slice(0, 10)}.json`);
@@ -460,6 +463,11 @@ async function importerFichier(fichier) {
     const r = await importerArmurerie(donnees);
     return dire(r.erreur || (r.annule ? 'Ouverture annulée.' : r.succes), r.erreur ? 'erreur' : r.succes ? 'succes' : '');
   }
+  // Et un fichier de symboles.
+  if (donnees?.format === Symboles.FORMAT) {
+    const r = await installerSymboles(donnees, fichier.size);
+    return dire(r.erreur || r.succes, r.erreur ? 'erreur' : 'succes');
+  }
   if (donnees?.format !== FORMAT_SAUVEGARDE) return dire('Ce fichier n’est pas une sauvegarde du Compagnon de quête.', 'erreur');
   if (donnees.versionFormat > VERSION_FORMAT) return dire('Cette sauvegarde vient d’une version plus récente de l’application : mettez-la à jour d’abord.', 'erreur');
   if (!Array.isArray(donnees.parties)) return dire('La sauvegarde ne contient pas de liste de parties.', 'erreur');
@@ -474,6 +482,7 @@ async function importerFichier(fichier) {
     + (donnees.equipementDepart ? '\nL’équipement de départ des héros du fichier remplacera celui de cet iPad.' : '')
     + (Array.isArray(donnees.armurerie) && donnees.armurerie.length ? '\nL’armurerie du fichier remplacera celle de cet iPad.' : '')
     + (Array.isArray(donnees.personnages) && donnees.personnages.length ? `\n${donnees.personnages.length} personnage(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
+    + (donnees.symbolesLivre ? '\nLes symboles du plateau du fichier remplaceront ceux de cet iPad.' : '')
     + (Array.isArray(donnees.groupes) && donnees.groupes.length ? `\n${donnees.groupes.length} groupe(s) enregistré(s) du fichier seront ajoutés (ou remplacés s’ils existent déjà).` : '')
     + '\n\nContinuer ?';
   if (!confirm(message)) return dire('Restauration annulée.');
@@ -495,6 +504,10 @@ async function importerFichier(fichier) {
     await ecrireArmurerie(donnees.armurerie.map(Inventaire.nettoyerArme).filter(Boolean));
   if (typeof donnees.imagePlateau?.donnees === 'string' && donnees.imagePlateau.donnees.startsWith('data:image/'))
     await Stockage.ecrireReglage('imagePlateau', donnees.imagePlateau);
+  if (donnees.symbolesLivre) {
+    const r = Symboles.valider(donnees.symbolesLivre);
+    if (r.pack) { r.pack.actif = donnees.symbolesLivre.actif !== false; await Stockage.ecrireReglage('symbolesLivre', r.pack); appliquerSymboles(r.pack); }
+  }
   if (donnees.caracteristiques && typeof donnees.caracteristiques === 'object') {
     await Stockage.ecrireReglage('caracteristiques', donnees.caracteristiques);
   }
@@ -526,16 +539,17 @@ async function afficherAPropos() {
   const armes = await lireArmurerie();
   const imagePlateau = await Stockage.lireReglage('imagePlateau') || null;
   const themePlateau = await Stockage.lireReglage('themePlateau') || 'pierre';
+  const symboles = await Stockage.lireReglage('symbolesLivre') || null;
   vue.innerHTML = `
     ${formulaireCaracs(caracs)}
     ${formulaireArmurerie(armes)}
     ${formulaireEquipement(equipement)}
-    ${formulaireImagePlateau(imagePlateau, themePlateau)}
+    ${formulaireImagePlateau(imagePlateau, themePlateau, symboles)}
     ${formulaireCartes(cartes)}
     <section class="carte">
       <h2>Compagnon de quête ${VERSION_APP}</h2>
-      <p>Application personnelle, à usage familial. Elle ne contient aucun texte, aucune illustration
-         ni aucun logo officiel.</p>
+      <p>Application personnelle, à usage familial. Son code ne contient aucun texte, aucune illustration
+         ni aucun logo officiel. Les symboles que vous importez (Apparence du plateau) restent sur cet iPad.</p>
       <p>Pictogrammes : <strong>game-icons.net</strong>, licence Creative Commons BY 3.0.
          Auteurs : Delapouite, Lorc et Skoll
          (détail dans le fichier CREDITS.md du code). Fond retiré et couleurs adaptées.</p>
@@ -563,6 +577,7 @@ async function afficherAPropos() {
   brancherArmurerie(armes);
   brancherEquipement(equipement);
   brancherImagePlateau(imagePlateau);
+  brancherSymboles(symboles);
   brancherCartes(cartes);
 
   $('#btn-maj').addEventListener('click', async () => {
@@ -846,7 +861,7 @@ async function importerArmurerie(donnees) {
 
 const MARGES_PLATEAU = [['gauche', 'Gauche'], ['haut', 'Haut'], ['droite', 'Droite'], ['bas', 'Bas']];
 
-function formulaireImagePlateau(img, theme) {
+function formulaireImagePlateau(img, theme, symb = null) {
   return `
     <section class="carte">
       <h2>Apparence du plateau</h2>
@@ -873,7 +888,78 @@ function formulaireImagePlateau(img, theme) {
         </div>
         <label class="ligne petit"><input type="checkbox" id="img-murs" ${img.murs ? 'checked' : ''}> Tracer aussi les murs de l’application par-dessus l’image</label>
         <div class="apercu-plateau"><svg id="img-apercu" viewBox="0 0 1040 760" preserveAspectRatio="xMidYMid meet"></svg></div>` : ''}
+      ${formulaireSymboles(symb)}
     </section>`;
+}
+
+/* ---------- Symboles personnels du plateau (symboles.js) ----------
+   Fichier « compagnon-hq/symboles » préparé à partir de vos propres photos ; il reste sur cet iPad. */
+
+function formulaireSymboles(pack) {
+  const n = pack ? Object.keys(pack.images || {}).length : 0;
+  const apercu = pack ? ['gobelin', 'orque', 'porte', 'porteSecrete', 'table', 'coffre', 'fosse', 'escalier']
+    .filter(k => pack.images[k]).map(k => `<img src="${pack.images[k].donnees}" alt="" title="${k}">`).join('') : '';
+  return `
+      <h3>Symboles du plateau</h3>
+      <p>Un fichier de symboles (par exemple ceux de votre livre de quêtes) remplace les pictogrammes de l’application :
+         monstres, portes, portes secrètes, meubles, pièges, escalier, faces des dés et logo. Il reste sur cet iPad
+         et dans vos sauvegardes.</p>
+      ${pack ? `<p class="petit"><strong>${echapper(pack.nom)}</strong> — ${n} image(s).</p>
+        <div class="apercu-symboles">${apercu}</div>
+        <label class="petit case-symboles"><input type="checkbox" id="symb-actif" ${pack.actif !== false ? 'checked' : ''}> Utiliser ces symboles</label>` : ''}
+      <div class="ligne">
+        <button id="symb-choisir">${pack ? 'Remplacer le fichier…' : 'Ouvrir un fichier de symboles…'}</button>
+        ${pack ? '<button id="symb-retirer" class="danger">Retirer les symboles</button>' : ''}
+      </div>
+      <p id="symb-etat" class="discret petit"></p>`;
+}
+
+function appliquerSymboles(pack) {
+  Symboles.definir(pack);
+  const monstres = {};
+  for (const t of Symboles.CLES.monstre) { const src = Symboles.src(t); if (src) monstres[t] = src; }
+  Portraits.definirPersonnalises({ monstres, medaillons: true });
+}
+
+async function installerSymboles(donnees, taille = 0) {
+  const r = Symboles.valider(donnees, taille);
+  if (r.erreur) return r;
+  const ancien = await Stockage.lireReglage('symbolesLivre');
+  if (ancien && !confirm(`Remplacer les symboles actuels (« ${ancien.nom} ») par ceux de ce fichier ?`)) return { erreur: 'Ouverture annulée.' };
+  await Stockage.ecrireReglage('symbolesLivre', r.pack);
+  appliquerSymboles(r.pack);
+  return { succes: `${Object.keys(r.pack.images).length} symbole(s) installé(s)` + (r.ignorees.length ? ` ; ignoré(s) : ${r.ignorees.join(', ')}` : '') + '.' };
+}
+
+function brancherSymboles(pack) {
+  const etat = $('#symb-etat');
+  const choix = document.createElement('input');
+  choix.type = 'file'; choix.accept = '.json,application/json'; choix.hidden = true; choix.id = 'symb-fichier';
+  vue.appendChild(choix);
+  $('#symb-choisir').addEventListener('click', () => choix.click());
+  choix.addEventListener('change', async () => {
+    const f = choix.files[0];
+    choix.value = '';
+    if (!f) return;
+    let donnees;
+    try { donnees = JSON.parse(await f.text()); } catch { etat.textContent = 'Ce fichier n’est pas un fichier JSON lisible.'; return; }
+    const r = await installerSymboles(donnees, f.size);
+    if (r.erreur) { etat.textContent = r.erreur; return; }
+    await afficherAPropos();
+    const e2 = $('#symb-etat'); if (e2) e2.textContent = r.succes;
+  });
+  $('#symb-actif')?.addEventListener('change', async () => {
+    pack.actif = $('#symb-actif').checked;
+    await Stockage.ecrireReglage('symbolesLivre', pack);
+    appliquerSymboles(pack);
+    etat.textContent = pack.actif ? 'Symboles utilisés.' : 'Pictogrammes de l’application utilisés.';
+  });
+  $('#symb-retirer')?.addEventListener('click', async () => {
+    if (!confirm('Retirer les symboles du plateau ? Les pictogrammes de l’application reviendront.')) return;
+    await Stockage.ecrireReglage('symbolesLivre', null);
+    appliquerSymboles(null);
+    afficherAPropos();
+  });
 }
 
 // Réduit une image choisie par l'utilisateur et renvoie un « data URL » JPEG.
@@ -1049,6 +1135,7 @@ document.querySelectorAll('.onglets button').forEach(b => b.addEventListener('cl
 }));
 $('#btn-retour').addEventListener('click', afficherParties);
 
-lireArmurerie().catch(() => {}).finally(afficherParties);
+Stockage.lireReglage('symbolesLivre').then(appliquerSymboles).catch(() => {})
+  .then(() => lireArmurerie()).catch(() => {}).finally(afficherParties);
 verifierRappel();
 preparerHorsLigne();
