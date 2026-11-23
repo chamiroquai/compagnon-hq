@@ -176,6 +176,7 @@ const VuePlateau = (() => {
               <li>Fouille des pièges (règle maison) : un héros sur la case devant une porte ouverte fouille aussi l’autre côté — la pièce depuis le couloir, ou le couloir depuis la pièce. Pas pour les portes secrètes ni le trésor.</li>
               <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Un passage secret (⇄) connu s’emprunte en un pas : quand le héros actif est dessus, l’application propose de l’emprunter (après « Pas maintenant », touchez le héros pour que la proposition revienne).</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
+              <li>Allié à escorter (certaines quêtes) : une fois trouvé, il joue juste après le héros qui l’a trouvé. À son tour, lancez ses dés rouges, touchez son pion et déplacez-le ; il n’a pas d’action. Les monstres peuvent l’attaquer ; à 0 point de Vie, il meurt. Ramené vivant sur l’escalier, il rapporte sa récompense en fin de quête réussie.</li>
               <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
                   dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
@@ -235,6 +236,8 @@ const VuePlateau = (() => {
       historique.push(avant);
       if (historique.length > 60) historique.shift();
       Plateau.devoiler(g, etat, Plateau.porteeDe(partie.reglages));
+      const trouves = decouvrirAllies(etat);
+      const tombes = mortsAllies(etat);
       // Courage prend fin quand plus aucun monstre n'est en vue.
       if (!etat.monstres.some(m => etat.revele.includes(Plateau.idx(L, m.x, m.y)))) etat.heros.forEach(h => { delete h.courage; });
       // Escalier : la question « terminer la quête ? » n'a de sens qu'après un départ, et revient après un nouveau départ.
@@ -245,8 +248,75 @@ const VuePlateau = (() => {
       // Un héros soigné n'est plus « à terre en attente ».
       etat.heros.forEach(h => { if (h.corps !== 0) delete h.secoursReporte; });
       partie.etat = etat;
+      if (trouves.length) annoncerAllies(trouves);
       enregistrer();
       dessiner();
+      // Après le message éventuel de l'appelant.
+      if (tombes.length) setTimeout(() => msg(...tombes.map(h => `☠ ${h.nom} ne survit pas.${allieDe(h)?.recompense?.or ? ' La récompense est perdue.' : ''}`)), 0);
+    }
+
+    /* ---------- Alliés à escorter (v0.33.0) ----------
+       Un allié de la quête (ex. un prisonnier) reste caché jusqu'à ce que sa case soit dévoilée.
+       Il rejoint alors les héros : il joue juste après le héros qui l'a trouvé (son escorte),
+       se déplace au toucher comme un héros (on lance ses dés rouges à la main), n'a aucune action,
+       peut être attaqué par les monstres, et meurt à 0 point de Vie (pas de secours).
+       Revenu vivant à l'escalier, il rapporte sa récompense en fin de quête réussie. */
+    const allieDe = h => (h?.allie ? (quete.allies || []).find(a => a.id === h.allie) : null);
+
+    function decouvrirAllies(e) {
+      const trouves = [];
+      for (const a of quete.allies || []) {
+        e.alliesTrouves = e.alliesTrouves || [];
+        if (e.alliesTrouves.includes(a.id) || !e.revele.includes(Plateau.idx(L, a.x, a.y))) continue;
+        e.alliesTrouves.push(a.id);
+        const ordre = e.ordre || [];
+        const actif = e.heros.find(h => h.id === ordre[e.tour?.index]);
+        const escorte = actif && !actif.allie ? actif
+          : e.heros.find(h => !h.allie && !h.mort && h.corps !== 0 && h.x != null && ordre.includes(h.id));
+        const id = 'allie-' + a.id;
+        const court = a.nom.split(/\s+/).map(m => m[0]).join('').slice(0, 2).toUpperCase();
+        const corps = a.corps || 2;
+        e.heros.push({ id, allie: a.id, escorte: escorte?.id || null, classe: 'allie', nom: a.nom, court,
+          x: a.x, y: a.y, corps, corpsMax: corps, attaque: 0, defense: a.defense || 2, or: 0, inventaire: [] });
+        const pos = escorte ? ordre.indexOf(escorte.id) + 1 : ordre.length;
+        ordre.splice(pos, 0, id);
+        e.ordre = ordre;
+        if (e.tour && pos <= e.tour.index) e.tour.index++;
+        if (a.alarme) {
+          // Alarme : tout le donjon est dévoilé, les portes (non secrètes) s'ouvrent, tous les monstres s'éveillent.
+          e.revele = g.zones.map((z, i) => i);
+          e.penombre = {};
+          for (const p of quete.portes || []) if (!p.secrete && !e.portesOuvertes.includes(p.id)) e.portesOuvertes.push(p.id);
+          for (const m of e.monstres) m.vu = true;
+        }
+        trouves.push({ a, escorte: escorte?.nom || null });
+      }
+      return trouves;
+    }
+
+    // Allié tombé à 0 : il meurt aussitôt (ni potion, ni héritage) et quitte l'ordre de jeu.
+    function mortsAllies(e) {
+      const tombes = [];
+      for (const h of e.heros) {
+        if (!h.allie || h.mort || h.corps !== 0) continue;
+        const etaitActif = (e.ordre || [])[e.tour?.index] === h.id;
+        h.mort = true; h.mortEn = { x: h.x, y: h.y }; h.x = null; h.y = null;
+        if (etaitActif && e.tour && !e.zargon) { e.tour.deplacement = null; passerAuSuivant(e); }
+        tombes.push(h);
+      }
+      return tombes;
+    }
+
+    function annoncerAllies(trouves) {
+      const textes = trouves.map(({ a, escorte }) => {
+        const n = a.deplacementDes || 2, d = a.defense || 2;
+        return [a.texte || `Vous avez trouvé ${a.nom} !`,
+          a.alarme ? 'Une alarme retentit : tout le donjon apparaît et les portes s’ouvrent.' : '',
+          `${a.nom} vous accompagne${escorte ? ` et joue juste après ${escorte}` : ''}. À son tour, lancez ${n} dé${n > 1 ? 's' : ''} rouge${n > 1 ? 's' : ''}, puis touchez son pion pour le déplacer.`,
+          `${a.nom} n’attaque pas et se défend avec ${d} dé${d > 1 ? 's' : ''}.`,
+          a.recompense?.or ? `Récompense : ${a.recompense.or} pièces d’or à partager, si ${a.nom} atteint l’escalier en vie.` : ''].filter(Boolean).join(' ');
+      });
+      evenement = { genre: 'fin', titre: trouves.map(t => t.a.nom).join(', '), ambiance: '', texte: textes.join(' '), figure: 'allie-' + trouves[0].a.id };
     }
 
     function annuler() {
@@ -474,7 +544,7 @@ const VuePlateau = (() => {
         if (h.x == null) continue;
         const cibleS = sortCible && !vueMJ && ciblesSort(sortCible).heros.some(k => k.id === h.id);
         const horsVueS = cibleS && !Sorts.sort(sortCible).partout && h.id !== actif?.id && intercepte(actif, h);
-        const cls = 'pion heros h-' + h.id + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '') + (h.corps === 0 ? ' a-terre' : '')
+        const cls = 'pion heros h-' + h.id + (h.allie ? ' allie' : '') + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '') + (h.corps === 0 ? ' a-terre' : '')
           + (cibleS ? ' cible-sort' : '') + (horsVueS ? ' hors-vue' : '');
         const gr = el('g', { class: cls, 'data-heros': h.id }, svg);
         // Héros actif : anneau blanc autour du pion, visible quelle que soit sa couleur.
@@ -702,7 +772,7 @@ const VuePlateau = (() => {
         ordre.map((hid, n) => {
           const h = etat.heros.find(k => k.id === hid);
           return `<li class="${n === t.index ? 'en-cours' : ''}${h.corps === 0 ? ' a-terre' : ''}${h.mort ? ' mort' : ''}"><button class="puce-heros" data-fiche="${hid}" aria-label="Fiche : ${h.nom}">
-            <span class="pastille h-${hid}"></span>${h.court}<span class="pc">${h.mort ? '☠' : `♥${h.corps ?? '?'}`}</span></button></li>`;
+            <span class="pastille h-${hid}${h.allie ? ' allie' : ''}"></span>${h.court}<span class="pc">${h.mort ? '☠' : `♥${h.corps ?? '?'}`}</span></button></li>`;
         }).join('')
         + `<li class="zargon ${t.index >= ordre.length ? 'en-cours' : ''}" title="Zargon">Z</li>`;
 
@@ -732,6 +802,11 @@ const VuePlateau = (() => {
         html += `<strong>${actif.nom}</strong></span>
           <span>🌪 Djinn : touchez ${djinnPorteChoix ? 'la porte à ouvrir' : 'le monstre à attaquer'}.</span>
           <button id="tr-retour-djinn">Retour</button>`;
+      } else if (actif.allie) {
+        const a = allieDe(actif), n = a?.deplacementDes || 2;
+        html += `<strong>${actif.nom}</strong></span>
+          <span class="discret">${n} dé${n > 1 ? 's' : ''} rouge${n > 1 ? 's' : ''}, puis touchez son pion</span>
+          <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       } else {
         // Bandeau réduit : les choix détaillés sont dans la fenêtre « Actions ».
         html += `<strong>${actif.nom}</strong></span>
@@ -907,7 +982,7 @@ const VuePlateau = (() => {
 
     function porteProposee() {
       const h = herosActif();
-      if (!h || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || sortCible || combat || conclusion || evenement || secours() || heritage) return null;
+      if (!h || h.allie || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || sortCible || combat || conclusion || evenement || secours() || heritage) return null;
       return (quete.portes || []).find(p =>
         !etat.portesOuvertes.includes(p.id) && Plateau.porteVisible(etat, p) &&
         Plateau.devantPorte(h, p) &&
@@ -932,14 +1007,21 @@ const VuePlateau = (() => {
     function escalierPropose() {
       if (!quete.escalier || vueMJ || !herosActif() || fenetreActions || ciblage || combat || conclusion || evenement || secours() || heritage) return false;
       if (!etat.sortisEscalier || etat.escalierRefuse) return false;
-      const vivants = etat.heros.filter(debout);
+      const vivants = etat.heros.filter(h => debout(h) && !h.allie);
       return vivants.length > 0 && vivants.every(surEscalier);
     }
 
     function dessinerInviteEscalier(boite) {
-      const aTerre = etat.heros.filter(h => !h.mort && h.corps === 0).map(h => h.nom);
+      const aTerre = etat.heros.filter(h => !h.allie && !h.mort && h.corps === 0).map(h => h.nom);
+      // Alliés : sont-ils ramenés ? (la récompense n'est versée que s'ils sont sur l'escalier, vivants)
+      const allies = etat.heros.filter(h => h.allie).map(h => {
+        const or = allieDe(h)?.recompense?.or;
+        if (h.mort) return `${h.nom} n’a pas survécu.`;
+        if (surEscalier(h)) return `${h.nom} est à l’escalier${or ? ` : ${or} pièces d’or à partager` : ''}.`;
+        return `${h.nom} n’est pas à l’escalier${or ? ' : pas de récompense si vous terminez maintenant' : ''}.`;
+      });
       boite.innerHTML = `<span>Tous les héros sont revenus à l’escalier. Terminer la quête ?${aTerre.length
-          ? ` <span class="erreur">${echapperTexte(aTerre.join(', '))} (à terre) ${aTerre.length > 1 ? 'seront comptés comme morts' : 'sera compté comme mort'}.</span>` : ''}</span>
+          ? ` <span class="erreur">${echapperTexte(aTerre.join(', '))} (à terre) ${aTerre.length > 1 ? 'seront comptés comme morts' : 'sera compté comme mort'}.</span>` : ''}${allies.length ? ' ' + echapperTexte(allies.join(' ')) : ''}</span>
         <button id="inv-reussie" class="principal">Quête réussie</button>
         <button id="inv-echouee">Quête échouée</button>
         <button id="inv-pas-encore">Pas encore</button>`;
@@ -957,7 +1039,7 @@ const VuePlateau = (() => {
        tant que le héros reste sur la case d'arrivée. */
     function passageProposee() {
       const h = herosActif();
-      if (!h || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || sortCible || combat || conclusion || evenement || secours() || heritage) return null;
+      if (!h || h.allie || vueMJ || fenetreActions || ciblage || djinnPorteChoix || djinnMonstreChoix || sortCible || combat || conclusion || evenement || secours() || heritage) return null;
       if (refusees.has(`passage@${h.x},${h.y}`)) return null;
       const sortie = Plateau.sortiesPassage(g, etat, h.x, h.y)[0];
       return sortie ? { sortie } : null;
@@ -1783,7 +1865,9 @@ const VuePlateau = (() => {
       const h = herosActif();
       if (!h) return '';
       const ev = evenement;
-      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(h.id, h.court), h.nom, h.corps, h.corpsMax)}</div>`;
+      // Un événement peut montrer une autre figurine que le héros actif (ex. un allié retrouvé).
+      const f = (ev.figure && etat.heros.find(k => k.id === ev.figure)) || h;
+      const tete = `<div class="duel seul">${figurine('gauche', Portraits.heros(f.id, f.court), f.nom, f.corps, f.corpsMax)}</div>`;
       const amb = ev.ambiance ? `<p class="ambiance grande">${echapperTexte(ev.ambiance)}</p>` : '';
       if (ev.genre === 'fin') return `${tete}<p class="titre-zargon">${echapperTexte(ev.titre)}</p>${amb}
         ${ev.avertissement ? `<p class="erreur petit">${echapperTexte(ev.avertissement)}</p>` : ''}
@@ -2427,7 +2511,7 @@ const VuePlateau = (() => {
 
     // Premier héros à terre dont le sort n'est pas encore décidé.
     function secours() {
-      return etat.heros.find(h => h.corps === 0 && !h.mort && h.x != null && !h.secoursReporte) || null;
+      return etat.heros.find(h => !h.allie && h.corps === 0 && !h.mort && h.x != null && !h.secoursReporte) || null;
     }
 
     // Boire la potion n° k de l'inventaire ; « valeur » : points de Vie rendus (0 si effet autre).
@@ -2482,7 +2566,7 @@ const VuePlateau = (() => {
         if (za !== zb || za === '#') return false;
         return Plateau.estPiece(za) || Plateau.ligneDeVue(g, etat, ici.x, ici.y, f.x, f.y);
       };
-      const heritiers = etat.heros.filter(k => k.id !== hid && debout(k) && auMemeEndroit(k)).map(k => k.id);
+      const heritiers = etat.heros.filter(k => k.id !== hid && !k.allie && debout(k) && auMemeEndroit(k)).map(k => k.id);
       const voleur = biens && !heritiers.length ? etat.monstres.find(m => auMemeEndroit(m) && etat.revele.includes(Plateau.idx(L, m.x, m.y))) : null;
       const butin = [h.or ? `${h.or} pièce${h.or > 1 ? 's' : ''} d’or` : '', ...(h.inventaire || []).map(o => o.nom)].filter(Boolean);
       // Posé avant modifier(), qui redessine l'écran.
@@ -2592,6 +2676,10 @@ const VuePlateau = (() => {
     let ficheHeros = null; // héros dont la fiche est ouverte (pour la rafraîchir après ↶)
     function ouvrirFiche(hid) {
       const h = etat.heros.find(k => k.id === hid);
+      if (h?.allie) {
+        const d = h.defense || 2;
+        return msg(`${h.nom} — ${h.mort ? 'mort' : `Vie ${h.corps}/${h.corpsMax}`} · n’attaque pas · se défend avec ${d} dé${d > 1 ? 's' : ''}.`);
+      }
       const fiche = conteneur.querySelector('#pl-fiche');
       ficheHeros = hid;
       const classe = Regles.TYPES_HEROS.find(t => t.id === (h.classe || h.id))?.nom || '';
@@ -2607,7 +2695,7 @@ const VuePlateau = (() => {
       const inventaire = h.inventaire || [];
       fiche.innerHTML = `
         <div class="feuille-entete">
-          <h2><span class="pastille h-${hid}"></span> ${echapperTexte(h.nom)}</h2>
+          <h2><span class="pastille h-${hid}${h.allie ? ' allie' : ''}"></span> ${echapperTexte(h.nom)}</h2>
           <button class="icone" data-fermer aria-label="Fermer la fiche">✕</button>
         </div>
         ${h.nom !== classe ? `<p class="discret petit">${classe}</p>` : ''}

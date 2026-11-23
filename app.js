@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.32.2';
+const VERSION_APP = '0.33.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -136,11 +136,12 @@ async function afficherPartie(id) {
       quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor, imagePlateau, themePlateau,
       terminer: async issue => {
         if (!confirm(`Terminer la quête : ${issue === 'reussie' ? 'réussie' : 'échouée'} ?\nL’or et l’inventaire de chaque héros seront enregistrés dans son personnage.`)) return;
+        const recompenses = issue === 'reussie' && partie.quete && partie.etat ? Plateau.verserRecompenses(partie.quete, partie.etat) : [];
         const morts = await Heros.terminerQuete(partie, issue);
         delete partie.quete; delete partie.etat;
         await enregistrerPartie();
         await afficherPartie(id);
-        bandeau(`${issue === 'reussie' ? 'Quête réussie !' : 'Quête échouée.'} Or et inventaires enregistrés.`
+        bandeau(`${issue === 'reussie' ? 'Quête réussie !' : 'Quête échouée.'} ${recompenses.map(echapper).join(' ')}${recompenses.length ? ' ' : ''}Or et inventaires enregistrés.`
           + (morts.length ? ` ☠ ${morts.map(echapper).join(', ')} ${morts.length > 1 ? 'sont morts' : 'est mort'}.` : ''),
           [{ texte: 'OK', action: () => bandeau(null) }]);
       },

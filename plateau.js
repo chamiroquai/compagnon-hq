@@ -716,6 +716,16 @@ const Plateau = (() => {
       if (t.active != null && !Array.isArray(t.active)) err.push(`interrupteur ${t.id} : « active » doit être une liste`);
       for (const c of Array.isArray(t.active) ? t.active : []) if (!cibles.has(c)) err.push(`interrupteur ${t.id} : « ${c} » n’est ni un passage ni une porte secrète`);
     }
+    // Alliés à escorter (v0.33.0) : personnages à retrouver puis à ramener (ex. un prisonnier).
+    for (const a of q.allies || []) {
+      idUnique(a, 'allié');
+      if (!a.nom) err.push(`allié ${a.id} : nom manquant`);
+      if (!libre(a.x, a.y)) err.push(`allié ${a.id} : case hors du plateau ou dans la roche`);
+      for (const champ of ['corps', 'defense', 'deplacementDes'])
+        if (a[champ] != null && !(Number.isInteger(a[champ]) && a[champ] >= 1 && a[champ] <= 12)) err.push(`allié ${a.id} : « ${champ} » doit être un nombre entier entre 1 et 12`);
+      if (a.recompense != null && !(Number.isInteger(a.recompense.or) && a.recompense.or >= 0)) err.push(`allié ${a.id} : « recompense.or » doit être un nombre entier positif`);
+      if ((q.monstres || []).some(m => m.x === a.x && m.y === a.y)) err.push(`allié ${a.id} : case déjà occupée par un monstre`);
+    }
     if (q.escalier) {
       const { x, y } = q.escalier;
       if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([dx, dy]) => libre(x + dx, y + dy))) err.push('escalier : ses 2 × 2 cases doivent être sur le plateau, hors de la roche');
@@ -725,6 +735,30 @@ const Plateau = (() => {
     return err;
   }
 
-  return { geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
+  // Fin de quête réussie (v0.33.0) : un allié revenu vivant sur l'escalier rapporte sa récompense,
+  // partagée à parts égales entre les héros encore debout (le reste au premier dans l'ordre de jeu).
+  // Modifie etat ; renvoie les phrases à afficher.
+  function verserRecompenses(q, etat) {
+    const s = q.escalier, phrases = [];
+    const surEscalier = h => !!s && h.x != null && h.x >= s.x && h.x <= s.x + 1 && h.y >= s.y && h.y <= s.y + 1;
+    const ordre = etat.ordre || [];
+    const heros = etat.heros.filter(h => !h.allie && !h.mort && h.corps !== 0)
+      .sort((a, b) => ordre.indexOf(a.id) - ordre.indexOf(b.id));
+    for (const a of q.allies || []) {
+      const h = etat.heros.find(k => k.allie === a.id);
+      if (!h || h.recompenseVersee) continue;
+      const or = a.recompense?.or || 0;
+      if (h.mort || h.corps === 0) { if (or) phrases.push(`${a.nom} n’a pas survécu : pas de récompense.`); continue; }
+      if (!surEscalier(h)) { if (or) phrases.push(`${a.nom} n’est pas à l’escalier : pas de récompense.`); continue; }
+      h.recompenseVersee = true;
+      if (!or || !heros.length) continue;
+      const part = Math.floor(or / heros.length), reste = or - part * heros.length;
+      heros.forEach((k, n) => { k.or = (k.or || 0) + part + (n === 0 ? reste : 0); });
+      phrases.push(`Sauvetage de ${a.nom} réussi : ${or} pièces d’or partagées (${part} chacun${reste ? `, ${reste} de plus pour ${heros[0].nom}` : ''}).`);
+    }
+    return phrases;
+  }
+
+  return { verserRecompenses, geometrie, idx, estPiece, ouvert, mur, ligneDeVue, trajectoireTir, devoiler, basculerZone, porteVisible, devantPorte, etatInitial, verifierQuete, porteeDe, PORTEE_DEFAUT, raisonBlocage, autreHerosEn, meubleEn, planMonstre, comportementDe, COMPORTEMENTS, pieceDe, caseLibreProche, piegeEn, eboulementEn, fosseEn, casesFouillables, casesFouillablesPieges, fouillerPortes, fouillerPieges,
     passageConnu, passageEntre, sortiesPassage, fouillerPassages, fouillerInterrupteurs, interrupteurPret, actionnerInterrupteur, HEROS };
 })();

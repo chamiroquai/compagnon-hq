@@ -524,3 +524,7 @@ svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }
 .mode-attaque { text-align: center; font-weight: bold; margin: 4px 0; }
 .cases-armurerie { display: flex; flex-wrap: wrap; gap: 6px 14px; grid-column: 1 / -1; }
 .cases-armurerie > span { flex-basis: 100%; }
+
+/* Allié à escorter (v0.33.0) */
+.pion.heros.allie circle:not(.anneau) { fill: #8c7a5b; }
+.pastille.allie { background: #8c7a5b; }
