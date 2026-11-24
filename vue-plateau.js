@@ -121,26 +121,37 @@ const VuePlateau = (() => {
     // restante, colonne d'outils à droite, messages par-dessus le plateau, menu en volet.
     conteneur.innerHTML = `
       <div class="jeu">
-        <header id="pl-haut" class="jeu-haut">
-          <button id="pl-quitter" class="icone" aria-label="Retour aux parties">‹</button>
-          <ol id="pl-ordre" class="ordre-jeu" aria-label="Ordre de jeu"></ol>
+        <aside id="pl-haut" class="jeu-gauche bois" aria-label="Tour de jeu">
+          <div class="jeu-titre">
+            <button id="pl-quitter" class="icone" aria-label="Retour aux parties">‹</button>
+            <div class="plaque parchemin">${echapperTexte(quete.titre)}</div>
+          </div>
           <div id="pl-tour" class="panneau-tour"></div>
-        </header>
+          <span class="espace"></span>
+          <nav class="jeu-outils" aria-label="Outils">
+            <button id="pl-annuler" class="icone" aria-label="Annuler" disabled>↶</button>
+            <button id="pl-mj" class="icone" aria-pressed="false" aria-label="Vue MJ">MJ</button>
+            <button id="pl-menu" class="icone" aria-label="Menu">☰</button>
+            <button id="pl-moins" class="icone" aria-label="Dézoomer">−</button>
+            <button id="pl-ajuster" class="icone petit-texte" aria-label="Ajuster le plateau à l’écran">⤢</button>
+            <button id="pl-plus" class="icone" aria-label="Zoomer">+</button>
+          </nav>
+        </aside>
         <div class="jeu-plateau">
           <div id="pl-cadre" class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
           <div id="pl-invite" class="invite-porte" hidden></div>
           <div id="pl-modale" class="modale" hidden></div>
-          <p id="pl-message" class="message-plateau" hidden></p>
         </div>
-        <nav class="jeu-outils" aria-label="Outils">
-          <button id="pl-annuler" class="icone" aria-label="Annuler" disabled>↶</button>
-          <button id="pl-mj" class="icone" aria-pressed="false" aria-label="Vue MJ">MJ</button>
-          <button id="pl-plus" class="icone" aria-label="Zoomer">+</button>
-          <button id="pl-moins" class="icone" aria-label="Dézoomer">−</button>
-          <button id="pl-ajuster" class="icone petit-texte" aria-label="Ajuster le plateau à l’écran">⤢</button>
-          <span class="espace"></span>
-          <button id="pl-menu" class="icone" aria-label="Menu">☰</button>
-        </nav>
+        <section class="journal parchemin" aria-label="Journal">
+          <div class="journal-titre">Journal</div>
+          <div id="pl-message" class="journal-lignes" aria-live="polite"></div>
+        </section>
+        <aside class="jeu-droite bois" aria-label="Héros et monstres">
+          <div class="plaque parchemin">Ordre de jeu</div>
+          <ol id="pl-ordre" class="ordre-jeu" aria-label="Ordre de jeu"></ol>
+          <div id="pl-titre-monstres" class="etiquette-bois" hidden>Monstres en vue</div>
+          <ul id="pl-monstres" class="monstres-vus"></ul>
+        </aside>
         <div id="pl-fiche" class="feuille fiche" hidden></div>
         <div id="pl-feuille" class="feuille" hidden>
           <div class="feuille-entete">
@@ -171,7 +182,7 @@ const VuePlateau = (() => {
               <li>Se déplacer : touchez le héros dont c’est le tour, puis les cases éclairées une par une (lancez vos dés rouges et comptez vous-mêmes).
                   Le numéro de chaque pas s’inscrit discrètement dans le coin de la case ; un retour en arrière compte aussi.
                   Touchez à nouveau le héros pour s’arrêter. Les numéros s’effacent à la fin du tour.</li>
-              <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : bouton « Fiche » en haut pour le héros actif, ou touchez sa pastille dans l’ordre de jeu, ou le pion d’un autre héros.</li>
+              <li>Fiche d’un héros (points de Vie, d’Esprit, or, inventaire, dés) : bouton « Fiche » à gauche pour le héros actif, ou touchez sa carte dans l’ordre de jeu (colonne de droite), ou le pion d’un autre héros.</li>
               <li>On peut traverser un autre héros, mais pas s’arrêter sur sa case. Murs, portes fermées, monstres et meubles bloquent.</li>
               <li>Touchez une porte fermée pour l’ouvrir : le héros actif doit se trouver devant elle (une case en diagonale ne suffit pas). Quand le héros actif arrive contre une porte, l’application propose de l’ouvrir ; après « Pas maintenant », touchez le héros pour que la proposition revienne.</li>
               <li>Trésor (règle maison) : dans une pièce qui contient un coffre, on ne peut chercher le trésor que depuis une case voisine d’un coffre (le bouton reste grisé sinon).</li>
@@ -180,10 +191,10 @@ const VuePlateau = (() => {
               <li>Interrupteurs et passages secrets (certaines quêtes) : une fouille de pièges repère un interrupteur (◉) ; marcher dessus l’actionne et révèle ce qu’il commande. Certains trésors révèlent eux aussi un passage ou une porte secrète quand on les trouve. Un passage secret (⇄) connu s’emprunte en un pas : quand le héros actif est dessus, l’application propose de l’emprunter (après « Pas maintenant », touchez le héros pour que la proposition revienne).</li>
               <li>« Fin du tour » passe au héros suivant, puis à Zargon.</li>
               <li>Allié à escorter (certaines quêtes) : une fois trouvé, il joue juste après le héros qui l’a trouvé. À son tour, lancez ses dés rouges, touchez son pion et déplacez-le ; il n’a pas d’action. Les monstres peuvent l’attaquer ; à 0 point de Vie, il meurt. Ramené vivant sur l’escalier, il rapporte sa récompense en fin de quête réussie.</li>
-              <li>Colonne de droite : ↶ annuler, MJ (vue du maître du jeu), + et − zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
+              <li>En bas de la colonne de gauche : ↶ annuler, MJ (vue du maître du jeu), ☰ menu, − et + zoom, ⤢ plateau ajusté à l’écran. On peut aussi pincer le plateau à deux doigts pour zoomer, et le faire glisser avec un doigt.</li>
               <li>Vue MJ : tout le plateau apparaît. Toucher un héros puis une case le pose n’importe où ; toucher une case
                   dévoile ou cache sa pièce ; toucher une porte secrète la rend trouvée.</li>
-              <li>Touchez un message pour le faire disparaître.</li>
+              <li>Les messages s’ajoutent au journal sous le plateau ; touchez-le pour l’agrandir ou le réduire.</li>
             </ul>
           </section>
           <section>
@@ -205,17 +216,28 @@ const VuePlateau = (() => {
     const svg = conteneur.querySelector('#pl-svg');
     const cadre = conteneur.querySelector('#pl-cadre');
     const bulle = conteneur.querySelector('#pl-message');
-    // Message affiché par-dessus le plateau ; un toucher le fait disparaître.
-    // msg('texte') ou msg('texte', { ambiance: '…' }, 'suite') : chaque morceau sur sa ligne,
-    // les lignes d'ambiance en italique.
+    const journalBloc = bulle.closest('.journal');
+    /* Journal sous le plateau (v0.40.0) : chaque message s'ajoute en bas ; le dernier est en
+       évidence. msg('texte') ou msg('texte', { ambiance: '…' }, 'suite') : chaque morceau sur sa
+       ligne, les lignes d'ambiance en italique. msg('') ne supprime rien : il atténue le dernier
+       message (consigne terminée). Toucher le journal l'agrandit ou le réduit. */
+    const journal = [];
     const msg = (...morceaux) => {
       const lignes = morceaux.filter(m => m && (typeof m === 'string' ? m.trim() : m.ambiance));
-      bulle.innerHTML = lignes.map(m => typeof m === 'string'
+      if (!lignes.length) { journalBloc.classList.add('lu'); return; }
+      const html = lignes.map(m => typeof m === 'string'
         ? `<span>${echapperTexte(m)}</span>`
         : `<em class="ambiance">${echapperTexte(m.ambiance)}</em>`).join('<br>');
-      bulle.hidden = !lignes.length;
+      journalBloc.classList.remove('lu');
+      if (journal[journal.length - 1] !== html) journal.push(html);
+      if (journal.length > 30) journal.shift();
+      bulle.innerHTML = journal.map((l, i) => `<p class="${i === journal.length - 1 ? 'dernier' : ''}">${l}</p>`).join('');
+      bulle.scrollTop = bulle.scrollHeight;
     };
-    bulle.addEventListener('click', () => msg(''));
+    journalBloc.addEventListener('click', () => {
+      journalBloc.classList.toggle('ouvert');
+      requestAnimationFrame(() => { bulle.scrollTop = bulle.scrollHeight; });
+    });
 
     // Taille du plateau : au zoom 1, les cases sont aussi grandes que possible
     // pour que tout le plateau tienne dans la place disponible.
@@ -911,48 +933,60 @@ const VuePlateau = (() => {
       const t = etat.tour || { numero: 1, index: 0 };
       const ordre = etat.ordre || [];
       const actif = herosActif();
+      const vie = h => `<span class="pv" aria-label="points de Vie">♥ ${h.corps ?? '?'}/${h.corpsMax ?? '?'}</span>`;
+      const esprit = h => (h.allie ? '' : `<span class="pe" aria-label="points d’Esprit">✦ ${h.esprit ?? '?'}/${h.espritMax ?? '?'}</span>`);
       conteneur.querySelector('#pl-ordre').innerHTML =
         ordre.map((hid, n) => {
           const h = etat.heros.find(k => k.id === hid);
-          return `<li class="${n === t.index ? 'en-cours' : ''}${h.corps === 0 ? ' a-terre' : ''}${h.mort ? ' mort' : ''}"><button class="puce-heros" data-fiche="${hid}" aria-label="Fiche : ${h.nom}">
-            <span class="pastille h-${hid}${h.allie ? ' allie' : ''}"></span>${h.court}<span class="pc">${h.mort ? '☠' : `♥${h.corps ?? '?'}`}</span></button></li>`;
+          return `<li class="carte-heros h-${hid}${n === t.index ? ' en-cours' : ''}${h.corps === 0 ? ' a-terre' : ''}${h.mort ? ' mort' : ''}${h.allie ? ' allie' : ''}"><button class="puce-heros" data-fiche="${hid}" aria-label="Fiche : ${echapperTexte(h.nom)}">
+            <span class="portrait">${Portraits.heros(h.id, h.court, h.symbole)}</span>
+            <span class="infos"><span class="nom">${echapperTexte(h.nom)}</span><span class="stats">${h.mort ? '☠ mort' : vie(h) + esprit(h)}</span></span></button></li>`;
         }).join('')
-        + `<li class="zargon ${t.index >= ordre.length ? 'en-cours' : ''}" title="Zargon">Z</li>`;
-
+        + `<li class="carte-heros zargon${t.index >= ordre.length ? ' en-cours' : ''}"><span class="portrait">Z</span><span class="infos"><span class="nom">Zargon</span></span></li>`;
+      const vus = vueMJ ? etat.monstres : etat.monstres.filter(m => m.vu);
+      conteneur.querySelector('#pl-titre-monstres').hidden = !vus.length;
+      conteneur.querySelector('#pl-monstres').innerHTML = vus.slice(0, 8).map(m => {
+        const info = infoMonstre(m.type);
+        return `<li class="carte-monstre"><span class="portrait">${Portraits.monstre(m.type, info.court, m.symbole)}</span>
+          <span class="infos"><span class="nom">${echapperTexte(nomVisible(m))}</span>${m.corps != null ? `<span class="stats">${vie(m)}</span>` : ''}</span></li>`;
+      }).join('') + (vus.length > 8 ? `<li class="discret petit">et ${vus.length - 8} autre${vus.length > 9 ? 's' : ''}</li>` : '');
+      // Bloc du héros dont c'est le tour (colonne de gauche).
+      const bloc = h => `<div class="actif-bloc h-${h.id}"><span class="portrait">${Portraits.heros(h.id, h.court, h.symbole)}</span>
+        <span class="infos"><span class="nom">${echapperTexte(h.nom)}</span><span class="stats">${vie(h)}${esprit(h)}</span></span></div>`;
       conteneur.querySelectorAll('[data-fiche]').forEach(b => b.addEventListener('click', () => ouvrirFiche(b.dataset.fiche)));
       const p = conteneur.querySelector('#pl-tour');
       conteneur.querySelector('#pl-haut').classList.toggle('saisie', (ciblage || djinnMonstreChoix || djinnPorteChoix || sortCible) && !vueMJ);
       if (vueMJ) { p.innerHTML = '<span class="discret">Vue MJ : le tour de jeu est en pause.</span>'; return; }
-      let html = `<span class="titre-tour">T${t.numero} · `;
+      let html = `<span class="titre-tour">Tour ${t.numero}`;
       if (!actif) {
         const z = etat.zargon || {};
         if (z.plan || z.defense || conclusion) {
-          html += `<strong>Zargon</strong> <span class="discret">· monstre ${Math.min(z.n + 1, z.file?.length || 0)} / ${z.file?.length || 0}</span></span>`;
+          html += ` · <strong>Zargon</strong></span><span class="discret">Monstre ${Math.min(z.n + 1, z.file?.length || 0)} / ${z.file?.length || 0}</span>`;
         } else {
-          html += `<strong>Zargon</strong></span>
+          html += ` · <strong>Zargon</strong></span>
             <span class="discret">${z.file?.length ? 'Tous les monstres ont joué.' : 'Aucun monstre actif.'}</span>
             <button id="tr-fin-zargon" class="principal">Fin du tour de Zargon</button>`;
         }
       } else if (ciblage) {
-        html += `<strong>${actif.nom}</strong></span>
+        html += `</span>${bloc(actif)}
           <span>Touchez le monstre à attaquer.</span>
           <button id="tr-retour-attaque">Retour</button>`;
       } else if (sortCible) {
-        html += `<strong>${actif.nom}</strong></span>
+        html += `</span>${bloc(actif)}
           <span>${Sorts.groupe(Sorts.sort(sortCible).groupe).symbole} ${Sorts.sort(sortCible).nom} : touchez la cible.</span>
           <button id="tr-retour-sort">Retour</button>`;
       } else if (djinnPorteChoix || djinnMonstreChoix) {
-        html += `<strong>${actif.nom}</strong></span>
+        html += `</span>${bloc(actif)}
           <span>🌪 Djinn : touchez ${djinnPorteChoix ? 'la porte à ouvrir' : 'le monstre à attaquer'}.</span>
           <button id="tr-retour-djinn">Retour</button>`;
       } else if (actif.allie) {
         const a = allieDe(actif), n = a?.deplacementDes || 2;
-        html += `<strong>${actif.nom}</strong></span>
+        html += `</span>${bloc(actif)}
           <span class="discret">${n} dé${n > 1 ? 's' : ''} rouge${n > 1 ? 's' : ''}, puis touchez son pion</span>
           <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
       } else {
         // Bandeau réduit : les choix détaillés sont dans la fenêtre « Actions ».
-        html += `<strong>${actif.nom}</strong></span>
+        html += `</span>${bloc(actif)}
           <button id="tr-actions">Actions</button>
           <button id="tr-fiche">Fiche</button>
           <button id="tr-fin-tour" class="principal">Fin du tour</button>`;
