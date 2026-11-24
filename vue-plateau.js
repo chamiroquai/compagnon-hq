@@ -448,6 +448,18 @@ const VuePlateau = (() => {
         el('image', { href: img.donnees, x: -g0 * largeur, y: -h0 * hauteur, width: largeur, height: hauteur, preserveAspectRatio: 'none', class: 'image-plateau' }, svg);
       }
 
+      const incline = vuePlateau === 'inclinee';
+      conteneur.querySelector('#pl-3d').classList.toggle('incline', incline);
+      /* Relief en vue inclinée (v0.42.0) : chaque meuble est surélevé selon sa hauteur et montre sa
+         face avant ; chaque figurine a une tranche (épaisseur de socle) et une ombre au sol.
+         Les formes du relief sont dans un groupe à part, sous l'objet, pour ne pas toucher à ses styles. */
+      const HAUTEUR_MEUBLE = { table: 6, coffre: 8, tombeau: 8, alchimiste: 9, tableSorcier: 9, torture: 9, trone: 11, ratelier: 12, etagere: 13, bibliotheque: 13, armoire: 13, cheminee: 13 };
+      const reliefPion = (cx, cy, rayon) => {
+        if (!incline) return;
+        const r = el('g', { class: 'relief' }, svg);
+        el('ellipse', { cx: cx + 2, cy: cy + rayon * 0.55, rx: rayon * 1.02, ry: rayon * 0.55, class: 'ombre-sol' }, r);
+        el('circle', { cx, cy: cy + 4, r: rayon, class: 'tranche' }, r);
+      };
       // 1. Cases. Thème « Pierre et couleurs » (theme-plateau.js) sauf avec une image ou en thème classique.
       const theme = !avecImage && (options.themePlateau || 'pierre') === 'pierre';
       svg.classList.toggle('theme-pierre', theme);
@@ -500,7 +512,14 @@ const VuePlateau = (() => {
         const ml = m.l || 1, mh = m.h || 1;
         const cleM = Symboles.premiere(m.symbole, m.type);
         const livre = !!cleM;
-        const gr = el('g', { class: 'mobilier m-' + m.type + (livre ? ' livre' : '') }, svg);
+        const hM = incline ? (HAUTEUR_MEUBLE[m.type] ?? 8) : 0;
+        if (hM) {
+          const r = el('g', { class: 'relief' }, svg);
+          el('rect', { x: m.x * T + 6, y: m.y * T + 6, width: ml * T - 8, height: mh * T - 8, rx: 3, class: 'ombre-sol' }, r);
+          el('rect', { x: m.x * T + 4, y: (m.y + mh) * T - 4 - hM, width: ml * T - 8, height: hM, class: 'face-meuble' }, r);
+          el('rect', { x: m.x * T + 4, y: m.y * T + 4 - hM, width: ml * T - 8, height: mh * T - 8, rx: 3, class: 'dessus-meuble' }, r);
+        }
+        const gr = el('g', { class: 'mobilier m-' + m.type + (livre ? ' livre' : ''), ...(hM ? { transform: `translate(0 ${-hM})` } : {}) }, svg);
         el('rect', { x: m.x * T + 4, y: m.y * T + 4, width: ml * T - 8, height: mh * T - 8, rx: 3 }, gr);
         el('title', {}, gr).textContent = m.nom;
         // Symbole du livre (symboles.js) : étiré sur toute la surface du meuble ; un meuble plus haut
@@ -592,8 +611,6 @@ const VuePlateau = (() => {
       }
 
       // 4. Murs (traits épais sur les bords entre zones différentes) ; thème pierre : trait clair sur une ombre.
-      const incline = vuePlateau === 'inclinee';
-      conteneur.querySelector('#pl-3d').classList.toggle('incline', incline);
       const HM = 9; // hauteur apparente des murs en vue inclinée (unités du dessin)
       const faces = incline ? el('g', { class: 'murs-faces' }, svg) : null;
       const ombres = theme ? el('g', { class: 'murs-ombre' }, svg) : null;
@@ -652,6 +669,7 @@ const VuePlateau = (() => {
       const poserMonstre = (m, classes, attrs = {}) => {
         const cleMonstre = Symboles.premiere(m.symbole, m.type);
         const livreM = !!cleMonstre;
+        if (!classes.includes('disparu')) reliefPion(m.x * T + T / 2, m.y * T + T / 2, livreM ? T * 0.5 : T / 2 - 3);
         const gr = el('g', { class: 'pion monstre' + (livreM ? ' livre' : '') + classes, ...attrs }, svg);
         el('rect', { x: m.x * T + 3, y: m.y * T + 3, width: T - 6, height: T - 6, rx: 5 }, gr);
         el('title', {}, gr).textContent = m.nom || infoMonstre(m.type).nom;
@@ -717,6 +735,7 @@ const VuePlateau = (() => {
         const horsVueS = cibleS && !Sorts.sort(sortCible).partout && h.id !== actif?.id && intercepte(actif, h);
         const cls = 'pion heros h-' + h.id + (h.allie ? ' allie' : '') + (selection === h.id ? ' choisi' : '') + (!vueMJ && actif?.id === h.id ? ' actif' : '') + (h.corps === 0 ? ' a-terre' : '')
           + (cibleS ? ' cible-sort' : '') + (horsVueS ? ' hors-vue' : '');
+        reliefPion(h.x * T + T / 2, h.y * T + T / 2, T / 2 - 3);
         const gr = el('g', { class: cls, 'data-heros': h.id }, svg);
         // Héros actif : anneau blanc autour du pion, visible quelle que soit sa couleur.
         if (cls.includes(' actif')) el('circle', { cx: h.x * T + T / 2, cy: h.y * T + T / 2, r: T / 2 - 1, class: 'anneau' }, gr);

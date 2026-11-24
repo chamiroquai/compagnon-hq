@@ -742,3 +742,10 @@ svg.avec-image:not(.murs-app) .murs-faces { display: none; }
 @keyframes vacille { 0% { opacity: .85 } 10% { opacity: 1 } 22% { opacity: .62 } 34% { opacity: .95 } 48% { opacity: .7 } 60% { opacity: 1 } 74% { opacity: .58 } 88% { opacity: .9 } 100% { opacity: .85 } }
 @keyframes flamme { from { transform: scale(1, 1) } to { transform: scale(.84, 1.16) } }
 @media (prefers-reduced-motion: reduce) { .lumieres.anime .halo, .lumieres.anime .flamme { animation: none; } }
+
+/* Relief du mobilier et des figurines en vue inclinée (v0.42.0) */
+.relief { pointer-events: none; }
+.relief .ombre-sol { fill: #000; opacity: .4; }
+.relief .face-meuble { fill: #2e1b0d; }
+.relief .dessus-meuble { fill: #3a2414; }
+.relief .tranche { fill: #120c07; stroke: #000; stroke-width: 1; }
