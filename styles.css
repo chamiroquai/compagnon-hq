@@ -719,3 +719,26 @@ svg.theme-pierre .escalier rect { fill: #b9b2a3; stroke: #3b352c; }
 /* Volets (menu, fiche) et bandeau de mise à jour : par-dessus le plateau et la colonne de droite */
 .jeu .feuille { right: 6px; font-family: var(--serif); }
 body.mode-jeu .bandeau { right: 12px; }
+
+/* ---------- Vue inclinée et torches (v0.41.0) ----------
+   Le plateau bascule de 20° (haut éloigné) ; les murs gagnent une face visible et leur dessus
+   est surélevé. Les pions restent à plat : à 20°, ils ne masquent aucune case voisine. */
+.jeu-plateau .cadre-plateau .plateau-3d { position: relative; margin: auto; flex: none; transform-origin: 50% 100%; transition: transform .45s ease; }
+.jeu-plateau .cadre-plateau .plateau-3d svg { display: block; margin: 0; }
+.plateau-3d.incline { transform: perspective(1100px) rotateX(20deg); }
+.murs-faces .face { fill: #2a241f; }
+.murs-faces .face-cote { fill: #1c1814; }
+svg.theme-pierre .murs-faces .face { fill: #9d9483; }
+svg.theme-pierre .murs-faces .face-cote { fill: #847b6b; }
+svg.avec-image:not(.murs-app) .murs-faces { display: none; }
+.lumieres { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+/* Lueur : centre chaud, coins de la pièce assombris (l'éclairage se lit aussi sur un sol clair). */
+.lumieres .halo { position: absolute; will-change: opacity;
+  background: radial-gradient(ellipse farthest-corner at 50% 35%, rgba(255, 190, 100, .36) 0%, rgba(255, 160, 70, .14) 40%, rgba(40, 20, 5, .18) 75%, rgba(20, 10, 0, .5) 100%); }
+.lumieres .flamme { position: absolute; transform-origin: 50% 100%; will-change: transform; filter: drop-shadow(0 0 3px rgba(255, 160, 60, .9)); }
+.lumieres .flamme svg { display: block; width: 100%; height: 100%; }
+.lumieres.anime .halo { animation: vacille 2.4s linear infinite; }
+.lumieres.anime .flamme { animation: flamme .28s ease-in-out infinite alternate; }
+@keyframes vacille { 0% { opacity: .85 } 10% { opacity: 1 } 22% { opacity: .62 } 34% { opacity: .95 } 48% { opacity: .7 } 60% { opacity: 1 } 74% { opacity: .58 } 88% { opacity: .9 } 100% { opacity: .85 } }
+@keyframes flamme { from { transform: scale(1, 1) } to { transform: scale(.84, 1.16) } }
+@media (prefers-reduced-motion: reduce) { .lumieres.anime .halo, .lumieres.anime .flamme { animation: none; } }

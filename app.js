@@ -4,7 +4,7 @@
    Le plateau, les héros et les monstres arriveront aux étapes suivantes. */
 'use strict';
 
-const VERSION_APP = '0.40.0';
+const VERSION_APP = '0.41.0';
 const FORMAT_SAUVEGARDE = 'compagnon-hq/sauvegarde';
 const VERSION_FORMAT = 1;
 const JOURS_RAPPEL = 7; // rappel de sauvegarde au-delà de ce nombre de jours
@@ -135,8 +135,10 @@ async function afficherPartie(id) {
     const cartesTresor = await Stockage.lireReglage('cartesTresor') || [];
     const imagePlateau = await Stockage.lireReglage('imagePlateau') || null;
     const themePlateau = await Stockage.lireReglage('themePlateau') || 'pierre';
+    const vuePlateau = await Stockage.lireReglage('vuePlateau') || 'inclinee';
+    const torches = await Stockage.lireReglage('torches') || 'animees';
     VuePlateau.monter($('#zone-plateau'), partie, enregistrerPartie, {
-      quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor, imagePlateau, themePlateau,
+      quitter: afficherParties, abandonner: abandonnerQuete, caracs, cartesTresor, imagePlateau, themePlateau, vuePlateau, torches,
       terminer: async issue => {
         if (!confirm(`Terminer la quête : ${issue === 'reussie' ? 'réussie' : 'échouée'} ?\nL’or et l’inventaire de chaque héros seront enregistrés dans son personnage.`)) return;
         const recompenses = issue === 'reussie' && partie.quete && partie.etat ? Plateau.verserRecompenses(partie.quete, partie.etat) : [];

@@ -113,6 +113,9 @@ const VuePlateau = (() => {
     if (etat.tour.index >= (etat.ordre || []).length && !etat.zargon) { demarrerZargon(etat); partie.etat = etat; enregistrer(); }
     let selection = null;        // id du héros sélectionné
     let vueMJ = false;
+    // Vue inclinée et torches (v0.41.0, choix de l'utilisateur du 24/11/2026). Réglages › Apparence ou menu ☰.
+    let vuePlateau = options.vuePlateau || 'inclinee';
+    let torches = options.torches || 'animees';
     let zoom = Number(localStorage.getItem('zoomJeu')) || 1; // 1 = plateau ajusté à l'écran
     const historique = [];       // états précédents, pour « Annuler » (60 au plus)
 
@@ -138,7 +141,7 @@ const VuePlateau = (() => {
           </nav>
         </aside>
         <div class="jeu-plateau">
-          <div id="pl-cadre" class="cadre-plateau"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg></div>
+          <div id="pl-cadre" class="cadre-plateau"><div id="pl-3d" class="plateau-3d"><svg id="pl-svg" viewBox="0 0 ${L * T} ${H * T}" role="img" aria-label="Plateau de jeu"></svg><div id="pl-lumieres" class="lumieres" aria-hidden="true"></div></div></div>
           <div id="pl-invite" class="invite-porte" hidden></div>
           <div id="pl-modale" class="modale" hidden></div>
         </div>
@@ -160,6 +163,17 @@ const VuePlateau = (() => {
           </div>
           <section>
             <h3>Vision</h3>
+            <label for="pl-vue">Vue du plateau</label>
+            <select id="pl-vue">
+              <option value="inclinee">Inclinée (murs en relief)</option>
+              <option value="dessus">De dessus</option>
+            </select>
+            <label for="pl-torches">Torches dans les pièces</label>
+            <select id="pl-torches">
+              <option value="animees">Animées</option>
+              <option value="fixes">Fixes</option>
+              <option value="aucune">Aucune</option>
+            </select>
             <label for="pl-portee">Portée de vue dans les couloirs</label>
             <select id="pl-portee">
               <option value="illimitee">Illimitée (règle officielle)</option>
@@ -578,8 +592,13 @@ const VuePlateau = (() => {
       }
 
       // 4. Murs (traits épais sur les bords entre zones différentes) ; thème pierre : trait clair sur une ombre.
+      const incline = vuePlateau === 'inclinee';
+      conteneur.querySelector('#pl-3d').classList.toggle('incline', incline);
+      const HM = 9; // hauteur apparente des murs en vue inclinée (unités du dessin)
+      const faces = incline ? el('g', { class: 'murs-faces' }, svg) : null;
       const ombres = theme ? el('g', { class: 'murs-ombre' }, svg) : null;
       const murs = el('g', { class: 'murs' }, svg);
+      if (incline) { murs.setAttribute('transform', `translate(0 ${-HM})`); if (ombres) ombres.setAttribute('transform', `translate(0 ${-HM / 2})`); }
       for (let y = 0; y < H; y++) for (let x = 0; x < L; x++) {
         const i = Plateau.idx(L, x, y);
         if (x + 1 < L) {
@@ -587,6 +606,7 @@ const VuePlateau = (() => {
           if (Plateau.mur(g, i, j) && (visible(i) || visible(j))) {
             const a = { x1: (x + 1) * T, x2: (x + 1) * T, y1: y * T, y2: (y + 1) * T };
             el('line', a, murs); if (ombres) el('line', a, ombres);
+            if (faces) el('rect', { x: (x + 1) * T - 2.5, y: y * T - HM, width: 5, height: T + HM, class: 'face-cote' }, faces);
           }
         }
         if (y + 1 < H) {
@@ -594,6 +614,7 @@ const VuePlateau = (() => {
           if (Plateau.mur(g, i, j) && (visible(i) || visible(j))) {
             const a = { x1: x * T, x2: (x + 1) * T, y1: (y + 1) * T, y2: (y + 1) * T };
             el('line', a, murs); if (ombres) el('line', a, ombres);
+            if (faces) el('rect', { x: x * T - 2.5, y: (y + 1) * T - HM, width: T + 5, height: HM, class: 'face' }, faces);
           }
         }
       }
@@ -785,6 +806,7 @@ const VuePlateau = (() => {
         el('rect', { x: (i % L) * T, y: Math.floor(i / L) * T, width: T + 0.5, height: T + 0.5, fill: `url(#${id})` }, penombre);
       }
 
+      dessinerLumieres(vu);
       dessinerTour();
       dessinerInvite();
       dessinerModale();
@@ -798,6 +820,9 @@ const VuePlateau = (() => {
     /* ---------- Gestes ---------- */
 
     function caseTouchee(evt) {
+      const sous = document.elementsFromPoint(evt.clientX, evt.clientY).find(e => e.classList?.contains('case') && e.dataset.i !== undefined);
+      if (sous) { const i = +sous.dataset.i; return { x: i % L, y: Math.floor(i / L) }; }
+      if (vuePlateau === 'inclinee') return null;
       const pt = svg.createSVGPoint();
       pt.x = evt.clientX; pt.y = evt.clientY;
       const p = pt.matrixTransform(svg.getScreenCTM().inverse());
@@ -926,6 +951,36 @@ const VuePlateau = (() => {
       const t = etat.tour, ordre = etat.ordre || [];
       if (!t || t.index >= ordre.length) return null;
       return etat.heros.find(h => h.id === ordre[t.index]) || null;
+    }
+
+    /* Torches (v0.41.0) : une lueur chaude dans chaque pièce découverte et une flamme au milieu de
+       son mur du haut. Calque HTML au-dessus du plateau, positions en % du plateau (indépendantes
+       du zoom) ; la lueur reste dans le rectangle de la pièce pour ne rien éclairer sous le brouillard.
+       Animation par l'opacité et la déformation seulement (légères pour l'iPad). */
+    const FLAMME = '<svg viewBox="-.5 -1 1 1.2"><rect x="-.07" y="0" width=".14" height=".2" fill="#2a1a0c"/><path d="M0 -.95C.38 -.5 .42 -.15 0 .05C-.42 -.15 -.38 -.5 0 -.95Z" fill="#ff8a2a"/><path d="M0 -.62C.2 -.34 .22 -.1 0 .02C-.22 -.1 -.2 -.34 0 -.62Z" fill="#ffd36a"/><path d="M0 -.35C.09 -.2 .1 -.06 0 0C-.1 -.06 -.09 -.2 0 -.35Z" fill="#fff6d0"/></svg>';
+    function dessinerLumieres(vu) {
+      const z = conteneur.querySelector('#pl-lumieres');
+      z.textContent = '';
+      z.classList.toggle('anime', torches === 'animees');
+      if (torches === 'aucune' || vueMJ) return;
+      const pc = (v, n) => (100 * v / n) + '%';
+      let k = 0;
+      for (const cases of Object.values(g.pieces || {})) {
+        if (!cases.some(i => vu.has(i))) continue;
+        let x0 = L, y0 = H, x1 = 0, y1 = 0;
+        for (const i of cases) { const x = i % L, y = Math.floor(i / L); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+        const w = x1 - x0 + 1, h = y1 - y0 + 1;
+        const halo = document.createElement('div');
+        halo.className = 'halo';
+        Object.assign(halo.style, { left: pc(x0 + 0.05, L), top: pc(y0 + 0.05, H), width: pc(w - 0.1, L), height: pc(h - 0.1, H), animationDelay: `-${(k * 0.73) % 2.4}s` });
+        z.appendChild(halo);
+        const f = document.createElement('div');
+        f.className = 'flamme';
+        f.innerHTML = FLAMME;
+        Object.assign(f.style, { left: pc(x0 + w / 2 - 0.22, L), top: pc(y0 - 0.38, H), width: pc(0.44, L), height: pc(0.55, H), animationDelay: `-${(k * 0.11) % 0.28}s` });
+        z.appendChild(f);
+        k++;
+      }
     }
 
     // Panneau sous la barre : à qui le tour, et les boutons utiles à ce moment.
@@ -3086,6 +3141,10 @@ const VuePlateau = (() => {
     const choixPortee = conteneur.querySelector('#pl-portee');
     const valeurPortee = partie.reglages?.porteeCouloir ?? Plateau.PORTEE_DEFAUT;
     choixPortee.value = String(valeurPortee);
+    const choixVue = conteneur.querySelector('#pl-vue'), choixTorches = conteneur.querySelector('#pl-torches');
+    choixVue.value = vuePlateau; choixTorches.value = torches;
+    choixVue.addEventListener('change', () => { vuePlateau = choixVue.value; Stockage.ecrireReglage('vuePlateau', vuePlateau); dessiner(); });
+    choixTorches.addEventListener('change', () => { torches = choixTorches.value; Stockage.ecrireReglage('torches', torches); dessiner(); });
     // Menu (volet) : vision, notes, aide, retour, abandon.
     const feuille = conteneur.querySelector('#pl-feuille');
     conteneur.querySelector('#pl-menu').addEventListener('click', () => { feuille.hidden = !feuille.hidden; });
